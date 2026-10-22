@@ -41,17 +41,17 @@ jobs:
         shell: bash
         run: |
           if [ -f "release/Westron Client Setup 1.0.exe" ]; then
-            cp "release/Westron Client Setup 1.0.exe" "release/Windows-Westron-Client-Setup-1.0.exe"
+            cp "release/Westron Client Setup 1.0.exe" "release/Windows-Westron-Client-Setup-1.0.0.exe"
           else
             WIN_EXE=$(ls release/*.exe 2>/dev/null | head -n 1)
-            cp "$WIN_EXE" "release/Windows-Westron-Client-Setup-1.0.exe"
+            cp "$WIN_EXE" "release/Windows-Westron-Client-Setup-1.0.0.exe"
           fi
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: westron-client-windows
-          path: release/Windows-Westron-Client-Setup-1.0.exe
+          path: release/Windows-Westron-Client-Setup-1.0.0.exe
           if-no-files-found: error
 
   build-macos:
@@ -94,13 +94,13 @@ jobs:
             exit 1
           fi
           echo "Using macOS DMG source: $DMG_SOURCE"
-          cp "$DMG_SOURCE" "macos-client/release/MacOS-Westron-Client-1.0.dmg"
+          cp "$DMG_SOURCE" "macos-client/release/MacOS-Westron-Client-1.0.0.dmg"
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: westron-client-macos
-          path: macos-client/release/MacOS-Westron-Client-1.0.dmg
+          path: macos-client/release/MacOS-Westron-Client-1.0.0.dmg
           if-no-files-found: error
 
   publish-release:
@@ -125,20 +125,20 @@ jobs:
 
       - name: Prepare and verify release assets
         run: |
-          if [ -f "release/windows/Westron Client Setup 1.0.exe" ] && [ ! -f "release/windows/Windows-Westron-Client-Setup-1.0.exe" ]; then
-            mv "release/windows/Westron Client Setup 1.0.exe" "release/windows/Windows-Westron-Client-Setup-1.0.exe"
+          if [ -f "release/windows/Westron Client Setup 1.0.exe" ] && [ ! -f "release/windows/Windows-Westron-Client-Setup-1.0.0.exe" ]; then
+            mv "release/windows/Westron Client Setup 1.0.exe" "release/windows/Windows-Westron-Client-Setup-1.0.0.exe"
           fi
-          if [ ! -f "release/macos/MacOS-Westron-Client-1.0.dmg" ]; then
+          if [ ! -f "release/macos/MacOS-Westron-Client-1.0.0.dmg" ]; then
             DMG_SOURCE=$(ls release/macos/*arm64*.dmg 2>/dev/null | head -n 1)
             if [ -z "$DMG_SOURCE" ]; then
               DMG_SOURCE=$(ls release/macos/*.dmg 2>/dev/null | head -n 1)
             fi
             if [ -n "$DMG_SOURCE" ]; then
-              cp "$DMG_SOURCE" "release/macos/MacOS-Westron-Client-1.0.dmg"
+              cp "$DMG_SOURCE" "release/macos/MacOS-Westron-Client-1.0.0.dmg"
             fi
           fi
-          test -f "release/windows/Windows-Westron-Client-Setup-1.0.exe" || (echo "::error::Missing Windows-Westron-Client-Setup-1.0.exe" && exit 1)
-          test -f "release/macos/MacOS-Westron-Client-1.0.dmg" || (echo "::error::Missing MacOS-Westron-Client-1.0.dmg" && exit 1)
+          test -f "release/windows/Windows-Westron-Client-Setup-1.0.0.exe" || (echo "::error::Missing Windows-Westron-Client-Setup-1.0.0.exe" && exit 1)
+          test -f "release/macos/MacOS-Westron-Client-1.0.0.dmg" || (echo "::error::Missing MacOS-Westron-Client-1.0.0.dmg" && exit 1)
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -147,5 +147,5 @@ jobs:
           name: Westron Client ${{ github.ref_name }}
           generate_release_notes: true
           files: |
-            release/windows/Windows-Westron-Client-Setup-1.0.exe
-            release/macos/MacOS-Westron-Client-1.0.dmg
+            release/windows/Windows-Westron-Client-Setup-1.0.0.exe
+            release/macos/MacOS-Westron-Client-1.0.0.dmg
