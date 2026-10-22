@@ -1,78 +1,111 @@
+
 name: Build Westron Client
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
+    tags: ["v*"]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-windows:
     name: Windows Build (.exe)
     runs-on: windows-latest
     steps:
-      - name: Kodu Çek (Checkout)
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Node.js Kurulumu
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: JDK 25 Kurulumu
+      - name: Setup JDK 25
         uses: actions/setup-java@v4
         with:
-          distribution: 'oracle'
-          java-version: '25'
+          distribution: oracle
+          java-version: "25"
 
-      - name: Bağımlılıkları Yükle
+      - name: Install dependencies
         run: npm ci
 
-      - name: Windows Paketini Derle (.exe)
+      - name: Build Windows installer
         run: npm run package:win
 
-      - name: Windows Kurulum Dosyasını Arşivle
+      - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: westron-client-windows
-          path: |
-            release/Westron Client Setup 1.0.exe
-            release/latest.yml
+          path: release/Westron Client Setup 1.0.exe
+          if-no-files-found: error
 
   build-macos:
-    name: macOS Build (.dmg & .zip)
+    name: macOS Build (.dmg)
     runs-on: macos-latest
     steps:
-      - name: Kodu Çek (Checkout)
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Node.js Kurulumu
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: JDK 25 Kurulumu
+      - name: Setup JDK 25
         uses: actions/setup-java@v4
         with:
-          distribution: 'oracle'
-          java-version: '25'
+          distribution: oracle
+          java-version: "25"
 
-      - name: Bağımlılıkları Yükle
+      - name: Install dependencies
         run: npm ci
 
-      - name: Gradle İzinlerini Ayarla
+      - name: Set Gradle permissions
         run: chmod +x fabric-mod/gradlew
 
-      - name: macOS Paketini Derle (.dmg & .zip)
+      - name: Build macOS installer
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
         run: npm run package:macos
 
-      - name: macOS Kurulum Dosyalarını Arşivle
+      - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: westron-client-macos
-          path: |
-            macos-client/release/*.dmg
-            macos-client/release/*.zip
+          path: macos-client/release/*.dmg
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish download links
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: westron-client-windows
+          path: release/windows
+
+      - name: Download macOS DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: westron-client-macos
+          path: release/macos
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Westron Client ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release/windows/*.exe
+            release/macos/*.dmg
