@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+macos-client/release/
+fabric-mod/.gradle/
+fabric-mod/build/
+!fabric-mod/build/libs/westron-client-skin-1.0.jar
+.env
+.env.*
+*.bin
+*.key
+*.pem
+*.log
+
+# Local backups and generated TypeScript state
+*.bak
+*.tsbuildinfo

@@ -1,0 +1,78 @@
+name: Build Westron Client
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    name: Windows Build (.exe)
+    runs-on: windows-latest
+    steps:
+      - name: Kodu Çek (Checkout)
+        uses: actions/checkout@v4
+
+      - name: Node.js Kurulumu
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: JDK 25 Kurulumu
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'oracle'
+          java-version: '25'
+
+      - name: Bağımlılıkları Yükle
+        run: npm ci
+
+      - name: Windows Paketini Derle (.exe)
+        run: npm run package:win
+
+      - name: Windows Kurulum Dosyasını Arşivle
+        uses: actions/upload-artifact@v4
+        with:
+          name: westron-client-windows
+          path: |
+            release/Westron Client Setup 1.0.exe
+            release/latest.yml
+
+  build-macos:
+    name: macOS Build (.dmg & .zip)
+    runs-on: macos-latest
+    steps:
+      - name: Kodu Çek (Checkout)
+        uses: actions/checkout@v4
+
+      - name: Node.js Kurulumu
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: JDK 25 Kurulumu
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'oracle'
+          java-version: '25'
+
+      - name: Bağımlılıkları Yükle
+        run: npm ci
+
+      - name: Gradle İzinlerini Ayarla
+        run: chmod +x fabric-mod/gradlew
+
+      - name: macOS Paketini Derle (.dmg & .zip)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run package:macos
+
+      - name: macOS Kurulum Dosyalarını Arşivle
+        uses: actions/upload-artifact@v4
+        with:
+          name: westron-client-macos
+          path: |
+            macos-client/release/*.dmg
+            macos-client/release/*.zip

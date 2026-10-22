@@ -1,0 +1,21 @@
+{
+  "directories": {
+    "output": "macos-client/release"
+  },
+  "mac": {
+    "category": "public.app-category.games",
+    "icon": "macos-client/westron-client.icns",
+    "darkModeSupport": true,
+    "target": [
+      "dmg",
+      "zip"
+    ],
+    "artifactName": "Westron Client-${version}-${arch}.${ext}"
+  },
+  "extraResources": [
+    {
+      "from": "fabric-mod/build/libs/westron-client-skin-1.0.jar",
+      "to": "westron-client-skin-1.0.jar"
+    }
+  ]
+}

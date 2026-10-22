@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="164" height="314" viewBox="0 0 164 314">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#191725"/>
+      <stop offset=".55" stop-color="#11131b"/>
+      <stop offset="1" stop-color="#0b0d12"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d2c3ff"/>
+      <stop offset=".5" stop-color="#a48bff"/>
+      <stop offset="1" stop-color="#6252a4"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#8571c4"/>
+      <stop offset="1" stop-color="#463a70"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#554783"/>
+      <stop offset="1" stop-color="#292439"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#8f73e8" stop-opacity=".3"/>
+      <stop offset="1" stop-color="#8f73e8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="164" height="314" fill="url(#bg)"/>
+  <circle cx="80" cy="92" r="83" fill="url(#glow)"/>
+  <path d="M0 0h164v1H0zM0 313h164v1H0z" fill="#b9a7ff" opacity=".32"/>
+  <g fill="none" stroke="#b9a7ff" opacity=".12">
+    <path d="M0 206h164M0 224h164M0 242h164M0 260h164M0 278h164M0 296h164"/>
+    <path d="M12 198v116M30 198v116M48 198v116M66 198v116M84 198v116M102 198v116M120 198v116M138 198v116M156 198v116"/>
+  </g>
+  <circle cx="82" cy="86" r="49" fill="none" stroke="#b7a3ff" stroke-opacity=".2"/>
+  <circle cx="82" cy="86" r="37" fill="#a48bff" fill-opacity=".06" stroke="#c9baff" stroke-opacity=".28"/>
+  <g stroke="#e4dcff" stroke-opacity=".55" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M82 43 121 65 82 87 43 65Z" fill="url(#violet)"/>
+    <path d="M43 65 82 87 82 132 43 110Z" fill="url(#left)"/>
+    <path d="M121 65 82 87 82 132 121 110Z" fill="url(#right)"/>
+    <path d="m82 43 0 44M43 65l39 22 39-22M82 87v45" fill="none" stroke-opacity=".4"/>
+  </g>
+  <g fill="#f2efff" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle">
+    <text x="82" y="169" font-size="17" font-weight="700" letter-spacing="1.6">WESTRON</text>
+    <text x="82" y="188" font-size="9" font-weight="500" letter-spacing="3.4" fill="#b2a2e7">CLIENT SETUP</text>
+  </g>
+  <path d="M34 202h96" stroke="#c3b3ff" stroke-opacity=".25"/>
+  <g fill="#858397" font-family="Segoe UI,Arial,sans-serif" text-anchor="middle" font-size="8">
+    <text x="82" y="282" letter-spacing="1.25">A WORLD OF YOUR OWN</text>
+    <text x="82" y="296" fill="#a99ad8">FABRIC EDITION</text>
+  </g>
+</svg>

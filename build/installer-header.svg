@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="57" viewBox="0 0 150 57">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#191725"/>
+      <stop offset="1" stop-color="#0c0e14"/>
+    </linearGradient>
+    <linearGradient id="cube" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#d7caff"/>
+      <stop offset=".55" stop-color="#a48bff"/>
+      <stop offset="1" stop-color="#6252a4"/>
+    </linearGradient>
+  </defs>
+  <rect width="150" height="57" fill="url(#bg)"/>
+  <g transform="translate(12 11)" stroke="#e6deff" stroke-opacity=".65" stroke-width=".7" stroke-linejoin="round">
+    <path d="M17 0 34 9.5 17 19 0 9.5Z" fill="url(#cube)"/>
+    <path d="M0 9.5 17 19v19L0 28.5Z" fill="#66558f"/>
+    <path d="M34 9.5 17 19v19l17-9.5Z" fill="#3d3457"/>
+  </g>
+  <g font-family="Segoe UI,Arial,sans-serif">
+    <text x="58" y="27" fill="#f2efff" font-size="12" font-weight="700" letter-spacing=".7">WESTRON</text>
+    <text x="59" y="40" fill="#a99bd8" font-size="7" letter-spacing="1.9">CLIENT SETUP</text>
+  </g>
+  <path d="M0 56h150" stroke="#b9a7ff" stroke-opacity=".4"/>
+</svg>

@@ -1,0 +1,85 @@
+{
+  "name": "westron-client",
+  "version": "1.0.7",
+  "private": true,
+  "type": "module",
+  "author": "Westron Client",
+  "description": "A dark, Fabric-ready Minecraft launcher for Minecraft 26.3",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
+    "build": "tsc -b && vite build",
+    "build:mod": "fabric-mod\\gradlew.bat -p fabric-mod build",
+    "build:mod:macos": "sh fabric-mod/gradlew -p fabric-mod build",
+    "test:electron": "node --test electron/tests/westron-api.test.cjs electron/tests/modrinth-versions.test.cjs electron/tests/modrinth-installed-files.test.cjs electron/tests/update-config.test.cjs electron/tests/microsoft-auth.test.cjs electron/tests/minecraft-downloads.test.cjs electron/tests/update-publisher.test.cjs",
+    "start": "cross-env NODE_ENV=production electron .",
+    "package": "npm run build:mod && npm run build && electron-builder --win nsis --publish never",
+    "package:win": "npm run build:mod && npm run build && electron-builder --win nsis --publish never",
+    "package:macos": "npm run build:mod:macos && npm run build && electron-builder --mac dmg zip --arm64 --x64 --publish never --config macos-client/electron-builder.json",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@loontail/minecraft-kit": "^0.10.0",
+    "electron-updater": "^6.8.9",
+    "lucide-react": "^1.60.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^9.1.0",
+    "cross-env": "^10.1.0",
+    "electron": "^44.9.2",
+    "electron-builder": "^26.15.3",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.4",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.westron.client",
+    "productName": "Westron Client",
+    "buildVersion": "1.0.0.1",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://westronskin.sytes.net/updates/",
+        "channel": "latest"
+      }
+    ],
+    "artifactName": "Westron Client Setup 1.0.exe",
+    "extraResources": [
+      {
+        "from": "build/westron-client.ico",
+        "to": "westron-client.ico"
+      },
+      {
+        "from": "fabric-mod/build/libs/westron-client-skin-1.0.jar",
+        "to": "westron-client-skin-1.0.jar"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/westron-client.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/westron-client.ico",
+      "uninstallerIcon": "build/westron-client.ico",
+      "installerHeader": "build/installer-header.bmp",
+      "installerSidebar": "build/installer-sidebar.bmp",
+      "uninstallerSidebar": "build/installer-sidebar.bmp"
+    }
+  }
+}

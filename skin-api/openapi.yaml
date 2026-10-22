@@ -1,0 +1,531 @@
+openapi: 3.1.0
+info:
+  title: Westron Skin API
+  version: 1.0.0
+  description: >
+    Separate Westron account and skin service. Microsoft authentication and
+    Minecraft game sessions remain independent.
+servers:
+  - url: https://westronskin.sytes.net
+    description: HTTPS endpoint served through Nginx Proxy Manager.
+tags:
+  - name: system
+  - name: authentication
+  - name: profiles
+  - name: skins
+  - name: updates
+paths:
+  /api/health:
+    get:
+      operationId: healthCheck
+      tags: [system]
+      responses:
+        "200":
+          description: API and SQLite database are available.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { const: ok }
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /api/openapi.yaml:
+    get:
+      operationId: getOpenApiDocument
+      tags: [system]
+      responses:
+        "200":
+          description: This OpenAPI document.
+          content:
+            application/yaml:
+              schema: { type: string }
+        default: { $ref: "#/components/responses/InternalError" }
+  /updates/{filename}:
+    get:
+      operationId: downloadUpdateAsset
+      tags: [updates]
+      summary: Download a public Westron Client update feed file.
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^(latest\\.yml|Westron Client Setup (\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
+      responses:
+        "200":
+          description: Update manifest, Windows installer or blockmap file.
+          content:
+            text/yaml:
+              schema: { type: string }
+            application/vnd.microsoft.portable-executable:
+              schema: { type: string, contentMediaType: application/octet-stream }
+            application/octet-stream:
+              schema: { type: string, contentMediaType: application/octet-stream }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/admin/updates/{filename}:
+    post:
+      operationId: publishUpdateAsset
+      tags: [updates]
+      summary: Publish an update asset; restricted to the configured publisher account.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^(latest\\.yml|Westron Client Setup (\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
+      requestBody:
+        required: true
+        content:
+          application/vnd.westron.update:
+            schema:
+              type: string
+              contentMediaType: application/octet-stream
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The authenticated account is not the configured update publisher.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      tags: [authentication]
+      summary: Register a Westron account and send email verification.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Registration" }
+      responses:
+        "201": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/EmailUnavailable" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/verify-email:
+    post:
+      operationId: verifyEmail
+      tags: [authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OneTimeCode" }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/resend-verification:
+    post:
+      operationId: resendVerification
+      tags: [authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/EmailUnavailable" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/claim-legacy-account:
+    post:
+      operationId: claimLegacyAccount
+      tags: [authentication]
+      summary: Attach and verify an email address for a migrated legacy account.
+      description: Requires an active pre-migration access token; only accounts without an email can use this operation.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/EmailUnavailable" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200": { $ref: "#/components/responses/SessionTokens" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Email address must be verified before signing in.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/SessionTokens" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/request-password-reset:
+    post:
+      operationId: requestPasswordReset
+      tags: [authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmailRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/EmailUnavailable" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/reset-password:
+    post:
+      operationId: resetPassword
+      tags: [authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordReset" }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [authentication]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Current session revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/me:
+    get:
+      operationId: getMyProfile
+      tags: [profiles]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/Profile" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/me/skin:
+    post:
+      operationId: uploadSkin
+      tags: [skins]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/SkinModel" }]
+      requestBody: { $ref: "#/components/requestBodies/SkinPng" }
+      responses:
+        "201": { $ref: "#/components/responses/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidSkin" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: changeSkin
+      tags: [skins]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: "#/components/parameters/SkinModel" }]
+      requestBody: { $ref: "#/components/requestBodies/SkinPng" }
+      responses:
+        "200": { $ref: "#/components/responses/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidSkin" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteMySkin
+      tags: [skins]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Skin deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/profiles/{username}:
+    get:
+      operationId: getPlayerProfile
+      tags: [profiles]
+      parameters: [{ $ref: "#/components/parameters/Username" }]
+      responses:
+        "200": { $ref: "#/components/responses/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/profiles/{username}/skin.png:
+    get:
+      operationId: getPlayerSkin
+      tags: [skins]
+      parameters:
+        - { $ref: "#/components/parameters/Username" }
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Validated PNG skin.
+          headers:
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+        "304": { description: Skin has not changed. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque access token
+  parameters:
+    Username:
+      name: username
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[A-Za-z0-9_]{3,16}$" }
+    SkinModel:
+      name: X-Skin-Model
+      in: header
+      required: false
+      schema: { type: string, enum: [classic, slim], default: classic }
+  requestBodies:
+    SkinPng:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [skin]
+            additionalProperties: false
+            properties:
+              skin:
+                type: string
+                format: binary
+                description: PNG image of 64x64 or 64x32 pixels, maximum 1 MiB.
+  responses:
+    SessionTokens:
+      description: Short-lived access token and rotating refresh token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/SessionTokens" }
+    Message:
+      description: Operation result. Some messages intentionally do not reveal account existence.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Message" }
+    Profile:
+      description: Westron profile and optional public skin.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Profile" }
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Username or email is already registered, or a skin already exists.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid credentials, or invalid refresh token.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unverified:
+      description: Verify the account email address before using skin operations.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidCode:
+      description: Resource not found or one-time code invalid/expired.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: Request body or skin exceeds its configured limit.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: Uploaded content is not a valid PNG.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidSkin:
+      description: PNG is invalid or its dimensions are unsupported.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many requests.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    EmailUnavailable:
+      description: Email provider is temporarily unavailable.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InternalError:
+      description: Unexpected server error; internal details are not returned.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Registration:
+      type: object
+      additionalProperties: false
+      required: [username, email, password]
+      properties:
+        username: { type: string, pattern: "^[A-Za-z0-9_]{3,16}$" }
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+    EmailRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+    OneTimeCode:
+      type: object
+      additionalProperties: false
+      required: [email, token]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        token: { type: string, minLength: 40, maxLength: 50, writeOnly: true }
+    PasswordReset:
+      type: object
+      additionalProperties: false
+      required: [email, token, newPassword]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        token: { type: string, minLength: 40, maxLength: 50, writeOnly: true }
+        newPassword: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 40, maxLength: 50, writeOnly: true }
+    SessionTokens:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken, tokenType, expiresIn, refreshExpiresIn, account]
+      properties:
+        accessToken: { type: string, writeOnly: true }
+        refreshToken: { type: string, writeOnly: true }
+        tokenType: { const: Bearer }
+        expiresIn: { type: integer, description: Access-token lifetime in seconds. }
+        refreshExpiresIn: { type: integer, description: Refresh-token lifetime in seconds. }
+        account:
+          type: object
+          required: [username, email, emailVerified]
+          properties:
+            username: { type: string }
+            email: { type: string, format: email }
+            emailVerified: { type: boolean }
+    Message:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+    Profile:
+      type: object
+      additionalProperties: false
+      required: [username, skin]
+      properties:
+        username: { type: string }
+        skin:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [model, url, updatedAt]
+              properties:
+                model: { type: string, enum: [classic, slim] }
+                url: { type: string, format: uri }
+                updatedAt: { type: string, format: date-time }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
