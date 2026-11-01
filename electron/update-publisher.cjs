@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const packageJson = require('../package.json');
 const MIN_UPDATE_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_UPDATE_UPLOAD_TIMEOUT_MS = 90 * 60 * 1000;
 const UPDATE_UPLOAD_BYTES_PER_SECOND = 64 * 1024;
@@ -24,8 +25,8 @@ async function readIfPresent(filePath) {
 }
 
 async function readUpdateFiles(directory) {
-  const installerName = 'Westron Client Setup 1.0.1.exe';
-  const blockmapName = 'Westron Client Setup 1.0.1.exe.blockmap';
+  const installerName = `Westron-Client-Setup-${packageJson.version}.exe`;
+  const blockmapName = `${installerName}.blockmap`;
   const [installerContents, blockmapContents, manifestContents] = await Promise.all([
     readIfPresent(path.join(directory, installerName)),
     readIfPresent(path.join(directory, blockmapName)),

@@ -518,7 +518,7 @@ export default function App() {
         <div className="content">
           {error && <div className="toast toast-error"><X size={16} />{translateUi(state?.language ?? 'tr', error)}<button onClick={() => setError('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
           {notice && <div className="toast toast-success"><Check size={16} />{translateUi(state?.language ?? 'tr', notice)}<button onClick={() => setNotice('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
-          {updateStatus && ['checking', 'available', 'downloading', 'downloaded', 'up-to-date', 'publishing', 'error'].includes(updateStatus.status) && (
+          {updateStatus && ['checking', 'available', 'downloading', 'downloaded', 'up-to-date', 'error'].includes(updateStatus.status) && (
             <UpdateBanner status={updateStatus} onCheck={() => { void checkForUpdates(); }} onDownload={() => { void downloadUpdate(); }} onRestart={() => {
               void window.nocturne.installUpdate().catch(reportError);
             }} />
@@ -733,13 +733,13 @@ function UpdateBanner({ status, onCheck, onDownload, onRestart }: {
   return (
     <section className={`update-banner update-${status.status}`} aria-live="polite">
       <div className="update-banner-icon">
-        {status.status === 'checking' || downloading || status.status === 'publishing'
+        {status.status === 'checking' || downloading
           ? <LoaderCircle className="spin" size={19} />
           : status.status === 'downloaded' || status.status === 'up-to-date' ? <Check size={19} /> : <ArrowDownToLine size={19} />}
       </div>
       <div className="update-banner-copy">
         <div className="update-banner-heading">
-          <strong>{status.status === 'available' ? `Westron Client ${status.version} ${t('hazır')}` : status.status === 'downloaded' ? t('Güncelleme kuruluma hazır') : status.status === 'up-to-date' ? t('Yeni güncelleme yok') : status.status === 'error' ? t('Güncelleme tamamlanamadı') : status.status === 'publishing' ? t('Güncelleme yayımlanıyor') : t('Westron Client güncelleniyor')}</strong>
+          <strong>{status.status === 'available' ? `Westron Client ${status.version} ${t('hazır')}` : status.status === 'downloaded' ? t('Güncelleme kuruluma hazır') : status.status === 'up-to-date' ? t('Yeni güncelleme yok') : status.status === 'error' ? t('Güncelleme tamamlanamadı') : t('Westron Client güncelleniyor')}</strong>
           <span>{t('Şu anki sürüm')} {status.currentVersion}</span>
         </div>
         <p>{status.message}</p>
@@ -754,55 +754,8 @@ function UpdateBanner({ status, onCheck, onDownload, onRestart }: {
         {status.status === 'available' && <button className="button button-primary button-small" onClick={onDownload}><ArrowDownToLine size={14} />{t('İndir')}</button>}
         {status.status === 'downloaded' && <button className="button button-primary button-small" onClick={onRestart}><Play size={14} />{t('Yeniden başlat')}</button>}
         {status.status === 'error' && <button className="button button-secondary button-small" onClick={onCheck}>{t('Tekrar dene')}</button>}
-        {(status.status === 'checking' || status.status === 'publishing') && <span className="update-checking">{status.status === 'publishing' ? `%${status.percent ?? 0}` : t('Kontrol ediliyor')}</span>}
+        {status.status === 'checking' && <span className="update-checking">{t('Kontrol ediliyor')}</span>}
       </div>
-    </section>
-  );
-}
-
-function UpdatePublisherPanel() {
-  const t = useUiText();
-  const [account, setAccount] = useState<WestronAccount | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const [error, setError] = useState('');
-  useEffect(() => {
-    if (!window.nocturne) {
-      setError(t('Launcher bağlantısı yüklenemedi. Uygulamayı yeniden başlatın.'));
-      return;
-    }
-    void window.nocturne.getWestronAccount().then(setAccount).catch((reason: unknown) => {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    });
-  }, []);
-  if (account?.email.trim().toLowerCase() !== 'ermiscaner78@gmail.com') return null;
-
-  async function publish() {
-    setBusy(true);
-    setMessage('');
-    setError('');
-    try {
-      const result = await window.nocturne.publishUpdate();
-      if (!result.cancelled) setMessage(result.message || t('Güncelleme yayımlandı.'));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <section className="settings-panel update-publisher-panel">
-      <div className="settings-heading"><div className="card-icon blue"><Upload size={18} /></div><div><h3>{t('Güncelleme yayımla')}</h3><span>{t('Yalnızca Westron güncelleme yayıncısı kullanabilir.')}</span></div></div>
-      <div className="update-settings-row">
-        <span>{t('klasörünü seçin; Setup,')} <code>release</code>, <code>.blockmap</code> {t('ve')} <code>latest.yml</code> {t('birlikte yayımlanır.')}</span>
-        <button className="button button-secondary button-small" onClick={() => { void publish(); }} disabled={busy || !account.emailVerified}>
-          {busy ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}
-          {account.emailVerified ? t('Release dosyalarını seç') : t('Önce e-postayı doğrulayın')}
-        </button>
-      </div>
-      {message && <p className="publisher-message">{message}</p>}
-      {error && <p className="publisher-error">{error}</p>}
     </section>
   );
 }
@@ -1395,7 +1348,6 @@ function SettingsPage({ state, language, onLanguageChange, theme, onThemeChange,
           </button>
         </div>
       </section>
-      <UpdatePublisherPanel />
       <div className="settings-note"><ShieldCheck size={17} /><span>{ui('Minecraft, giriş yöntemi olarak ana ekranda seçilen doğrulanmış Microsoft hesabını veya ayrı çevrimdışı kullanıcı adını kullanır. Westron Skin hesabı oyun oturumu sağlamaz.')}</span></div>
     </>
   );

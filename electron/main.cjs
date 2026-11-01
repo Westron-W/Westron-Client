@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const packageJson = require('../package.json');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -19,15 +20,13 @@ const {
 const { persistInstalledFiles, readInstallIndex, removeInstalledFile } = require('./modrinth-installed-files.cjs');
 const { createMicrosoftAuthService } = require('./microsoft-auth.cjs');
 const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-downloads.cjs');
-const { getUpdateUploadTimeoutMs, readUpdateFiles } = require('./update-publisher.cjs');
 
 const GAME_VERSION = '26.3';
-const DISPLAY_VERSION = '1.0.1';
+const DISPLAY_VERSION = packageJson.version;
 const DEFAULT_LOADER = 'fabric';
 const SUPPORTED_LOADERS = new Set(['vanilla', 'fabric', 'forge']);
 const GAME_VERSION_MIN = [1, 8, 0];
 const GAME_VERSION_MAX = [26, 3, 0];
-const UPDATE_PUBLISHER_EMAIL = 'ermiscaner78@gmail.com';
 const westronApi = createWestronApiClient();
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const WESTRON_AUTH_FILE = () => path.join(app.getPath('userData'), 'westron-auth.bin');
@@ -132,93 +131,6 @@ async function downloadUpdate() {
     });
     throw new Error('Güncelleme indirilemedi. Daha sonra yeniden deneyebilirsiniz.');
   }
-}
-
-function parseLocalUpdateManifest(buffer) {
-  const manifest = buffer.toString('utf8');
-  const version = manifest.match(/^version:\s*(\d+\.\d+\.\d+)\s*$/m)?.[1];
-  const fileName = manifest.match(/^  - url:\s*(Westron Client Setup 1\.0\.exe)\s*$/m)?.[1];
-  const sha512 = manifest.match(/^    sha512:\s*([A-Za-z0-9+/=]+)\s*$/m)?.[1];
-  if (!version?.startsWith('1.0.') || !fileName || !sha512) {
-    throw new Error('latest.yml geçersiz veya setup dosyasıyla uyumsuz.');
-  }
-  return { fileName, sha512 };
-}
-
-async function publishUpdateFiles() {
-  let credentials = await readWestronAuth();
-  if (!credentials?.account?.emailVerified
-    || credentials.account.email?.trim().toLowerCase() !== UPDATE_PUBLISHER_EMAIL) {
-    throw new Error(`Güncelleme yayımlamak için doğrulanmış ${UPDATE_PUBLISHER_EMAIL} hesabıyla giriş yapın.`);
-  }
-  const selection = await dialog.showOpenDialog({
-    title: 'Westron Client kurulum dosyalarıyla birlikte release klasörünü seç',
-    buttonLabel: 'Release klasörünü seç',
-    properties: ['openDirectory'],
-  });
-  if (selection.canceled) return { cancelled: true };
-
-  const files = await readUpdateFiles(selection.filePaths[0]);
-  const { installer, blockmap, manifest } = files;
-  const { fileName: manifestFileName, sha512 } = parseLocalUpdateManifest(manifest.contents);
-  if (installer.name !== manifestFileName
-    || createHash('sha512').update(installer.contents).digest('base64') !== sha512
-    || blockmap.contents.length === 0) {
-    throw new Error('latest.yml, installer veya blockmap birbiriyle eşleşmiyor.');
-  }
-
-  const orderedFiles = [installer, blockmap, manifest];
-  let accessToken = credentials.accessToken;
-  async function uploadFile(file, token) {
-    const timeoutMs = getUpdateUploadTimeoutMs(file.contents.length);
-    try {
-      await westronApi.request(`/api/v1/admin/updates/${encodeURIComponent(file.name)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/vnd.westron.update' },
-        body: file.contents,
-        accessToken: token,
-        timeoutMs,
-      });
-    } catch (error) {
-      if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-        const fileSizeMb = (file.contents.length / 1024 / 1024).toFixed(1);
-        throw new Error(
-          `${file.name} (${fileSizeMb} MB) yüklemesi zaman aşımına uğradı. `
-          + 'Bağlantınızı kontrol edip aynı release klasörüyle yeniden deneyin.',
-          { cause: error },
-        );
-      }
-      throw error;
-    }
-  }
-
-  for (let index = 0; index < orderedFiles.length; index += 1) {
-    const file = orderedFiles[index];
-    publishUpdateStatus({
-      status: 'publishing',
-      percent: Math.round((index / orderedFiles.length) * 100),
-      message: `Güncelleme dosyası yükleniyor (${index + 1}/${orderedFiles.length}): ${file.name}`,
-    });
-    try {
-      await uploadFile(file, accessToken);
-    } catch (error) {
-      if (error.status !== 401) throw error;
-      credentials = await refreshWestronAuth(credentials);
-      accessToken = credentials.accessToken;
-      await uploadFile(file, accessToken);
-    }
-    publishUpdateStatus({
-      status: 'publishing',
-      percent: Math.round(((index + 1) / orderedFiles.length) * 100),
-      message: `Güncelleme dosyaları sunucuya yükleniyor (${index + 1}/${orderedFiles.length}).`,
-    });
-  }
-  publishUpdateStatus({
-    status: 'up-to-date',
-    percent: 100,
-    message: 'Güncelleme yayımlandı. Kullanıcılar güncellemeleri denetleyebilir.',
-  });
-  return { cancelled: false, message: 'Güncelleme dosyaları yayımlandı.' };
 }
 
 function configureAutoUpdater() {
@@ -666,7 +578,7 @@ async function getState() {
     shaderProjects: Object.keys(shaderPackInstalls),
     modrinthModProjects: Object.keys(modInstalls),
     menuModInstalled: settings.loader === 'fabric' && settings.gameVersion === GAME_VERSION
-      && mods.some((mod) => mod.name === 'westron-client-skin-1.0.1.jar'),
+      && mods.some((mod) => mod.name === `westron-client-skin-${DISPLAY_VERSION}.jar`),
   };
 }
 
@@ -729,7 +641,7 @@ async function findJava(minecraftDir) {
 }
 
 async function installBundledMenu(minecraftDir) {
-  const jarName = 'westron-client-skin-1.0.1.jar';
+  const jarName = `westron-client-skin-${DISPLAY_VERSION}.jar`;
   const legacyJarNames = ['westron-client-skin-1.0.jar', 'westron-client-skin-1.0.0.jar', 'westron-client-menu-1.0.0.jar', 'nocturne-menu-1.0.0.jar'];
   const sourcePath = app.isPackaged
     ? path.join(process.resourcesPath, jarName)
@@ -1401,7 +1313,6 @@ ipcMain.handle('app:install-content', async (_event, type, projectId, selectedVe
 });
 ipcMain.handle('app:update-status', () => updateStatus);
 ipcMain.handle('app:check-for-updates', checkForUpdates);
-ipcMain.handle('app:publish-update', publishUpdateFiles);
 ipcMain.handle('app:download-update', downloadUpdate);
 ipcMain.handle('app:install-update', () => {
   if (updateStatus.status !== 'downloaded') throw new Error('Önce güncelleme indirilmelidir.');

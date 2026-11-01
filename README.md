@@ -28,13 +28,13 @@ Fabric kurulumu tamamlanınca Westron Client modu da `mods` klasörüne eklenir.
 
 ## Westron Skin API
 
-Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi backend'i [`skin-api/`](./skin-api/) dizinindedir. Kurulum, Docker/Nginx Proxy Manager ayarları, API endpoint'leri ve test komutları için [skin-api/README.md](./skin-api/README.md) dosyasına bakın. Fabric istemci modülü Westron skin ve pelerinlerini ve mevcut herkese açık Minecraft görünümlerini istemci tarafında yükler; PNG'leri HTTPS üzerinden alıp yerel önbelleğe alır. Başka launcher kullanan oyuncular `npm run build:mod` komutuyla oluşturulan `fabric-mod/build/libs/westron-client-skin-1.0.1.jar` dosyasını uyumlu Fabric profilinin `mods` klasörüne ekleyebilir. Modsuz istemciler özel görünümleri göremez; Westron profilinin otomatik bulunması için oyun adı Westron kullanıcı adıyla aynı olmalıdır.
+Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi backend'i [`skin-api/`](./skin-api/) dizinindedir. Kurulum, Docker/Nginx Proxy Manager ayarları, API endpoint'leri ve test komutları için [skin-api/README.md](./skin-api/README.md) dosyasına bakın. Fabric istemci modülü Westron skin ve pelerinlerini ve mevcut herkese açık Minecraft görünümlerini istemci tarafında yükler; PNG'leri HTTPS üzerinden alıp yerel önbelleğe alır. Başka launcher kullanan oyuncular `npm run build:mod` komutuyla oluşturulan `fabric-mod/build/libs/westron-client-skin-1.0.2.jar` dosyasını uyumlu Fabric profilinin `mods` klasörüne ekleyebilir. Modsuz istemciler özel görünümleri göremez; Westron profilinin otomatik bulunması için oyun adı Westron kullanıcı adıyla aynı olmalıdır.
 
 ## Sürüm numaraları
 
-Uygulama, paket, Windows kurulum dosyası ve Fabric skin modunun sürümü `1.0.1`'dir. Kurulum dosyası `release/Westron Client Setup 1.0.1.exe` adını alır.
+Uygulama, paket, Windows kurulum dosyası ve Fabric skin modunun sürümü `1.0.2`'dir. Kurulum dosyası `release/Westron-Client-Setup-1.0.2.exe` adını alır. Windows güncelleme denetimi GitHub Releases üzerinden yapılır.
 
-Güncelleme yayımlama alanında, `npm run package` komutuyla oluşturulan `release/` klasörünü seçin. Kurulum dosyası `Westron Client Setup 1.0.1.exe`, `.blockmap` ve `latest.yml` aynı klasörde bulunmalıdır; uygulama klasördeki üç dosyayı birlikte okuyup yayımlar. Büyük kurulum dosyaları için yükleme zaman aşımı dosya boyutuna göre en fazla 90 dakikaya çıkarılır. Kurulum sihirbazı Windows'un yerleşik kurulum adımlarını, Westron başlık ve kenar görselleriyle kullanır.
+Yeni sürüm, `v<version>` etiketi GitHub'a gönderildiğinde Actions tarafından derlenip GitHub Release olarak yayımlanır. Windows `.exe`, `.exe.blockmap` ve `latest.yml` dosyalarının tümü release'e eklenir; updater bu metadata'yı kullanır. `1.0.1` sürümünde kullanılan eski update adresi artık erişilebilir olmadığından, bu sürümde kalan kullanıcıların `1.0.2` kurulumunu GitHub Releases sayfasından bir kez elle yüklemesi gerekir. Sonraki sürümler otomatik güncellenir.
 
 ## Modrinth paketleri
 

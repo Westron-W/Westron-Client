@@ -70,7 +70,6 @@ contextBridge.exposeInMainWorld('nocturne', {
   checkForUpdates: () => ipcRenderer.invoke('app:check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('app:download-update'),
   installUpdate: () => ipcRenderer.invoke('app:install-update'),
-  publishUpdate: () => ipcRenderer.invoke('app:publish-update'),
   onUpdateStatus: (callback) => {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on('app:update-status', listener);

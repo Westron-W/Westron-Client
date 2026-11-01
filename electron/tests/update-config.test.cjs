@@ -8,22 +8,27 @@ const fs = require('node:fs');
 test('package and lockfile versions are aligned for release metadata', () => {
   assert.equal(packageJson.version, lockfile.version);
   assert.equal(packageJson.version, lockfile.packages[''].version);
-  assert.match(fs.readFileSync('electron/main.cjs', 'utf8'), /const DISPLAY_VERSION = '1\.0\.1';/);
+  assert.match(fs.readFileSync('electron/main.cjs', 'utf8'), /const DISPLAY_VERSION = packageJson\.version;/);
 });
 
-test('Windows installer publishes update metadata to the HTTPS update path', () => {
+test('Windows installer checks GitHub Releases and publishes updater metadata', () => {
   assert.ok(packageJson.build.win.target.some
     ? packageJson.build.win.target.some((target) => target === 'nsis')
     : packageJson.build.win.target === 'nsis');
   assert.ok(packageJson.build.publish.some((provider) =>
-    provider.provider === 'generic'
-    && provider.url === 'https://westronskin.sytes.net/updates/'
-    && provider.channel === 'latest'));
+    provider.provider === 'github'
+    && provider.owner === 'Westron-W'
+    && provider.repo === 'Westron-Client'
+    && provider.releaseType === 'release'));
+  const releaseWorkflow = fs.readFileSync('.github/workflows/build-release.yml', 'utf8');
+  assert.match(releaseWorkflow, /Westron-Client-Setup-\$\{VERSION\}\.exe\.blockmap/);
+  assert.match(releaseWorkflow, /cp release\/latest\.yml/);
+  assert.match(releaseWorkflow, /softprops\/action-gh-release/);
   assert.match(packageJson.dependencies['electron-updater'], /^\^/);
   assert.equal(packageJson.build.win.icon, 'build/westron-client.ico');
   assert.equal(packageJson.build.nsis.installerIcon, 'build/westron-client.ico');
   assert.equal(packageJson.build.nsis.uninstallerIcon, 'build/westron-client.ico');
-  assert.equal(packageJson.build.artifactName, 'Westron Client Setup 1.0.1.exe');
+  assert.equal(packageJson.build.artifactName, `Westron-Client-Setup-${packageJson.version}.exe`);
   assert.equal(packageJson.build.nsis.installerSidebar, 'build/installer-sidebar.bmp');
   assert.equal(packageJson.build.nsis.uninstallerSidebar, 'build/installer-sidebar.bmp');
   assert.equal(packageJson.build.nsis.installerHeader, 'build/installer-header.bmp');
@@ -51,17 +56,17 @@ test('macOS packages have isolated output and include the shared Fabric client m
   assert.deepEqual(packageJson.build.extraResources[1], macBuild.extraResources[0]);
   assert.ok(packageJson.build.files.includes('dist/**/*'));
   assert.ok(packageJson.build.files.includes('electron/**/*'));
-  assert.equal(macBuild.extraResources[0].to, 'westron-client-skin-1.0.1.jar');
+  assert.equal(macBuild.extraResources[0].to, `westron-client-skin-${packageJson.version}.jar`);
   assert.equal(packageJson.scripts['package:macos'].includes('macos-client/electron-builder.json'), true);
-  assert.equal(packageJson.version, '1.0.1');
+  assert.equal(packageJson.version, '1.0.2');
   const gradleProperties = fs.readFileSync('fabric-mod/gradle.properties', 'utf8');
-  assert.match(gradleProperties, /^mod_version=1\.0\.1$/m);
-  assert.equal(packageJson.build.extraResources[1].to, 'westron-client-skin-1.0.1.jar');
+  assert.match(gradleProperties, new RegExp(`^mod_version=${packageJson.version.replaceAll('.', '\\.')}$`, 'm'));
+  assert.equal(packageJson.build.extraResources[1].to, `westron-client-skin-${packageJson.version}.jar`);
 });
 
 test('macOS build maintains parity with Windows features and resources', () => {
   assert.equal(macBuild.mac.darkModeSupport, true);
-  assert.equal(fs.existsSync('fabric-mod/build/libs/westron-client-skin-1.0.1.jar'), true);
+  assert.equal(fs.existsSync(`fabric-mod/build/libs/westron-client-skin-${packageJson.version}.jar`), true);
   assert.ok(packageJson.scripts['package:macos'].includes('npm run build:mod:macos'));
   assert.ok(packageJson.scripts['package:macos'].includes('npm run build'));
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');

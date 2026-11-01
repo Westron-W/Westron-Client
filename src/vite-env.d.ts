@@ -29,7 +29,7 @@ interface LauncherState {
 }
 
 interface UpdateStatus {
-  status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'publishing' | 'error' | 'unavailable';
+  status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error' | 'unavailable';
   currentVersion: string;
   version?: string;
   releaseDate?: string;
@@ -168,7 +168,6 @@ interface Window {
     checkForUpdates: () => Promise<UpdateStatus>;
     downloadUpdate: () => Promise<void>;
     installUpdate: () => Promise<void>;
-    publishUpdate: () => Promise<{ cancelled: boolean; message?: string }>;
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
     openModsFolder: () => Promise<void>;
     openContentFolder: (type: 'resourcepack' | 'shader') => Promise<void>;
