@@ -22,7 +22,7 @@ const { createMicrosoftAuthService } = require('./microsoft-auth.cjs');
 const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-downloads.cjs');
 
 const GAME_VERSION = '26.3';
-const DISPLAY_VERSION = packageJson.displayVersion;
+const DISPLAY_VERSION = packageJson.version;
 const RELEASE_VERSION = packageJson.version;
 const DEFAULT_LOADER = 'fabric';
 const SUPPORTED_LOADERS = new Set(['vanilla', 'fabric', 'forge']);

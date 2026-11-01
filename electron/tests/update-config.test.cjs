@@ -6,11 +6,11 @@ const macBuild = require('../../macos-client/electron-builder.json');
 const fs = require('node:fs');
 
 test('package and lockfile versions are aligned for release metadata', () => {
-  assert.equal(packageJson.displayVersion, '1.0.1');
+  assert.equal(packageJson.version, '1.0.1');
   assert.equal(packageJson.version, lockfile.version);
   assert.equal(packageJson.version, lockfile.packages[''].version);
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
-  assert.match(mainCode, /const DISPLAY_VERSION = packageJson\.displayVersion;/);
+  assert.match(mainCode, /const DISPLAY_VERSION = packageJson\.version;/);
   assert.match(mainCode, /const RELEASE_VERSION = packageJson\.version;/);
 });
 
@@ -61,7 +61,7 @@ test('macOS packages have isolated output and include the shared Fabric client m
   assert.ok(packageJson.build.files.includes('electron/**/*'));
   assert.equal(macBuild.extraResources[0].to, `westron-client-skin-${packageJson.version}.jar`);
   assert.equal(packageJson.scripts['package:macos'].includes('macos-client/electron-builder.json'), true);
-  assert.equal(packageJson.version, '1.0.2');
+  assert.equal(packageJson.version, '1.0.1');
   const gradleProperties = fs.readFileSync('fabric-mod/gradle.properties', 'utf8');
   assert.match(gradleProperties, new RegExp(`^mod_version=${packageJson.version.replaceAll('.', '\\.')}$`, 'm'));
   assert.equal(packageJson.build.extraResources[1].to, `westron-client-skin-${packageJson.version}.jar`);

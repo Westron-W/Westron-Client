@@ -140,6 +140,13 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Westron Client ${{ github.ref_name }}
           generate_release_notes: true
+          overwrite_files: true
+          make_latest: true
           files: |
             release/windows/*
             release/macos/*
+
+      - name: Remove superseded v1.0.2 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete v1.0.2 --repo "${GITHUB_REPOSITORY}" --yes
