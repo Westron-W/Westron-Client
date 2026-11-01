@@ -32,7 +32,7 @@ Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi b
 
 ## Sürüm numaraları
 
-Uygulama, paket, Windows kurulum dosyası ve Fabric skin modunun sürümü `1.0.2`'dir. Kurulum dosyası `release/Westron-Client-Setup-1.0.2.exe` adını alır. Windows güncelleme denetimi GitHub Releases üzerinden yapılır.
+Uygulamada görünen sürüm etiketi `1.0.1`'dir. Güncelleme sistemi ve yayımlanan Windows/macOS paketlerinin gerçek sürümü `1.0.2` olarak kalır; Windows kurulum dosyası `release/Westron-Client-Setup-1.0.2.exe` adını alır. Windows güncelleme denetimi GitHub Releases üzerinden yapılır.
 
 Yeni sürüm, `v<version>` etiketi GitHub'a gönderildiğinde Actions tarafından derlenip GitHub Release olarak yayımlanır. Windows `.exe`, `.exe.blockmap` ve `latest.yml` dosyalarının tümü release'e eklenir; updater bu metadata'yı kullanır. `1.0.1` sürümünde kullanılan eski update adresi artık erişilebilir olmadığından, bu sürümde kalan kullanıcıların `1.0.2` kurulumunu GitHub Releases sayfasından bir kez elle yüklemesi gerekir. Sonraki sürümler otomatik güncellenir.
 

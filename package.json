@@ -1,6 +1,7 @@
 {
   "name": "westron-client",
   "version": "1.0.2",
+  "displayVersion": "1.0.1",
   "private": true,
   "type": "module",
   "author": "Westron Client",

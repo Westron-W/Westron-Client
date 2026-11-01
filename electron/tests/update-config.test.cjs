@@ -6,9 +6,12 @@ const macBuild = require('../../macos-client/electron-builder.json');
 const fs = require('node:fs');
 
 test('package and lockfile versions are aligned for release metadata', () => {
+  assert.equal(packageJson.displayVersion, '1.0.1');
   assert.equal(packageJson.version, lockfile.version);
   assert.equal(packageJson.version, lockfile.packages[''].version);
-  assert.match(fs.readFileSync('electron/main.cjs', 'utf8'), /const DISPLAY_VERSION = packageJson\.version;/);
+  const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
+  assert.match(mainCode, /const DISPLAY_VERSION = packageJson\.displayVersion;/);
+  assert.match(mainCode, /const RELEASE_VERSION = packageJson\.version;/);
 });
 
 test('Windows installer checks GitHub Releases and publishes updater metadata', () => {

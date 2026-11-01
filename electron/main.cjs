@@ -22,7 +22,8 @@ const { createMicrosoftAuthService } = require('./microsoft-auth.cjs');
 const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-downloads.cjs');
 
 const GAME_VERSION = '26.3';
-const DISPLAY_VERSION = packageJson.version;
+const DISPLAY_VERSION = packageJson.displayVersion;
+const RELEASE_VERSION = packageJson.version;
 const DEFAULT_LOADER = 'fabric';
 const SUPPORTED_LOADERS = new Set(['vanilla', 'fabric', 'forge']);
 const GAME_VERSION_MIN = [1, 8, 0];
@@ -578,7 +579,7 @@ async function getState() {
     shaderProjects: Object.keys(shaderPackInstalls),
     modrinthModProjects: Object.keys(modInstalls),
     menuModInstalled: settings.loader === 'fabric' && settings.gameVersion === GAME_VERSION
-      && mods.some((mod) => mod.name === `westron-client-skin-${DISPLAY_VERSION}.jar`),
+      && mods.some((mod) => mod.name === `westron-client-skin-${RELEASE_VERSION}.jar`),
   };
 }
 
@@ -641,7 +642,7 @@ async function findJava(minecraftDir) {
 }
 
 async function installBundledMenu(minecraftDir) {
-  const jarName = `westron-client-skin-${DISPLAY_VERSION}.jar`;
+  const jarName = `westron-client-skin-${RELEASE_VERSION}.jar`;
   const legacyJarNames = ['westron-client-skin-1.0.jar', 'westron-client-skin-1.0.0.jar', 'westron-client-menu-1.0.0.jar', 'nocturne-menu-1.0.0.jar'];
   const sourcePath = app.isPackaged
     ? path.join(process.resourcesPath, jarName)
@@ -845,7 +846,7 @@ function assertModrinthType(type) {
 }
 
 function modrinthHeaders() {
-  return { 'User-Agent': `WestronClient/${DISPLAY_VERSION} (launcher)` };
+  return { 'User-Agent': `WestronClient/${RELEASE_VERSION} (launcher)` };
 }
 
 async function getMinecraftVersions() {
