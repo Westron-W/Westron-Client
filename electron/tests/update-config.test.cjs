@@ -27,6 +27,10 @@ test('Windows installer checks GitHub Releases and publishes updater metadata', 
   assert.match(releaseWorkflow, /Westron-Client-Setup-\$\{VERSION\}\.exe\.blockmap/);
   assert.match(releaseWorkflow, /cp release\/latest\.yml/);
   assert.match(releaseWorkflow, /softprops\/action-gh-release/);
+  assert.match(releaseWorkflow, /release_tag:/);
+  assert.match(releaseWorkflow, /Verify published updater assets/);
+  assert.match(releaseWorkflow, /gh release view "\$RELEASE_TAG"/);
+  assert.doesNotMatch(releaseWorkflow, /gh release delete/);
   assert.match(packageJson.dependencies['electron-updater'], /^\^/);
   assert.equal(packageJson.build.win.icon, 'build/westron-client.ico');
   assert.equal(packageJson.build.nsis.installerIcon, 'build/westron-client.ico');

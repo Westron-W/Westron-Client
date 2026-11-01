@@ -8,6 +8,11 @@ on:
   pull_request:
     branches: [main, master]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to update (must match package.json version)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -107,7 +112,7 @@ jobs:
   publish-release:
     name: Publish download links
     needs: [build-windows, build-macos]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -125,8 +130,14 @@ jobs:
           path: release/macos
 
       - name: Prepare and verify release assets
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
+          if [ "$RELEASE_TAG" != "v${VERSION}" ]; then
+            echo "::error::Release tag must be v${VERSION}"
+            exit 1
+          fi
           test -f "release/windows/Westron-Client-Setup-${VERSION}.exe" || (echo "::error::Missing Windows updater installer" && exit 1)
           test -f "release/windows/Westron-Client-Setup-${VERSION}.exe.blockmap" || (echo "::error::Missing Windows updater blockmap" && exit 1)
           test -f "release/windows/latest.yml" || (echo "::error::Missing Windows updater manifest" && exit 1)
@@ -137,8 +148,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Westron Client ${{ github.ref_name }}
+          tag_name: ${{ inputs.release_tag || github.ref_name }}
+          name: Westron Client ${{ inputs.release_tag || github.ref_name }}
           generate_release_notes: true
           overwrite_files: true
           make_latest: true
@@ -146,7 +157,20 @@ jobs:
             release/windows/*
             release/macos/*
 
-      - name: Remove superseded v1.0.2 release
+      - name: Verify published updater assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release delete v1.0.2 --repo "${GITHUB_REPOSITORY}" --yes
+        run: |
+          RELEASE_TAG="${{ inputs.release_tag || github.ref_name }}"
+          VERSION="${RELEASE_TAG#v}"
+          ASSETS=$(gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
+          for ASSET in \
+            "Westron-Client-Setup-${VERSION}.exe" \
+            "Westron-Client-Setup-${VERSION}.exe.blockmap" \
+            "latest.yml"
+          do
+            if ! printf '%s\n' "$ASSETS" | grep -Fxq "$ASSET"; then
+              echo "::error::Published release is missing required updater asset: $ASSET"
+              exit 1
+            fi
+          done
