@@ -4,7 +4,8 @@
   "package": "io.nocturne.client.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "AbstractClientPlayerMixin"
+    "AbstractClientPlayerMixin",
+    "CapeLayerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -8,6 +8,7 @@ const WESTRON_API_PATHS = Object.freeze({
   refresh: '/api/v1/auth/refresh',
   logout: '/api/v1/auth/logout',
   profile: '/api/v1/me',
+  minecraftProfile: '/api/v1/me/minecraft-profile',
   skin: '/api/v1/me/skin',
   cape: '/api/v1/me/cape',
 });
@@ -165,6 +166,12 @@ function createWestronApiClient({
     refresh: (input) => postJson(WESTRON_API_PATHS.refresh, input),
     logout: (accessToken) => request(WESTRON_API_PATHS.logout, { method: 'POST', accessToken }),
     getProfile: (accessToken) => request(WESTRON_API_PATHS.profile, { accessToken }),
+    setMinecraftProfile: (username, accessToken) => request(WESTRON_API_PATHS.minecraftProfile, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username }),
+      accessToken,
+    }),
   };
 }
 

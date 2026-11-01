@@ -97,6 +97,29 @@ test('launcher maps its Minecraft username to the signed-in Westron profile and 
   await assert.rejects(readFile(identityPath, 'utf8'), { code: 'ENOENT' });
 });
 
+test('launcher can publish a linked Minecraft username to the authenticated Westron profile', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      return new Response(JSON.stringify({ message: 'Minecraft adı bağlandı.' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  const result = await apiClient.setMinecraftProfile('MinecraftNick', 'access-token');
+
+  assert.equal(result.message, 'Minecraft adı bağlandı.');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, `https://westronskin.sytes.net${WESTRON_API_PATHS.minecraftProfile}`);
+  assert.equal(requests[0].init.method, 'PUT');
+  assert.equal(requests[0].init.headers.get('content-type'), 'application/json');
+  assert.equal(requests[0].init.headers.get('authorization'), 'Bearer access-token');
+  assert.deepEqual(JSON.parse(requests[0].init.body), { username: 'MinecraftNick' });
+});
+
 test('launcher IPC resend channel forwards one POST to the API route without duplicating /api/v1', async () => {
   const registeredHandlers = new Map();
   const requestLog = [];

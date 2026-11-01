@@ -169,6 +169,5 @@ interface Window {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
     openModsFolder: () => Promise<void>;
     openContentFolder: (type: 'resourcepack' | 'shader') => Promise<void>;
-    copyServer: (address: string) => Promise<boolean>;
   };
 }

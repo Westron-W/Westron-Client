@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, clipboard, safeStorage, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -106,14 +106,6 @@ function checkForUpdates() {
     }
     return updateStatus;
   }).catch((error) => {
-    if (error.statusCode === 404 || /\b404\b/.test(error.message)) {
-      publishUpdateStatus({
-        status: 'up-to-date',
-        version: DISPLAY_VERSION,
-        message: 'Şu anda yeni bir güncelleme bulunmuyor.',
-      });
-      return updateStatus;
-    }
     console.error(`Update check failed: ${error.message}`);
     publishUpdateStatus({
       status: 'error',
@@ -240,7 +232,7 @@ function configureAutoUpdater() {
   autoUpdater.on('update-available', (info) => {
     publishUpdateStatus({
       status: 'available',
-      version: DISPLAY_VERSION,
+      version: info.version,
       releaseDate: info.releaseDate,
       releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes.slice(0, 4000) : '',
       message: 'Yeni bir sürüm indirilmeye hazır.',
@@ -261,7 +253,7 @@ function configureAutoUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     publishUpdateStatus({
       status: 'downloaded',
-      version: DISPLAY_VERSION,
+      version: info.version,
       percent: 100,
       message: 'Güncelleme hazır. Kurulum için uygulamayı yeniden başlatın.',
     });
@@ -762,9 +754,16 @@ async function writeLocalSkinIdentity(minecraftDir, minecraftUsername) {
     if (typeof credentials?.account?.username === 'string'
       && /^[A-Za-z0-9_]{3,16}$/.test(credentials.account.username)) {
       westronUsername = credentials.account.username;
+      try {
+        await westronApi.setMinecraftProfile(minecraftUsername, credentials.accessToken);
+      } catch (error) {
+        if (error.status !== 401) throw error;
+        const renewed = await refreshWestronAuth(credentials);
+        await westronApi.setMinecraftProfile(minecraftUsername, renewed.accessToken);
+      }
     }
-  } catch {
-    console.error('Could not read Westron account identity for local skin mapping.');
+  } catch (error) {
+    console.error(`Could not sync Westron Minecraft profile: ${error.message}`);
   }
   await writeLocalSkinIdentityFile(minecraftDir, minecraftUsername, westronUsername);
 }
@@ -840,13 +839,25 @@ async function runMinecraftInstall(kit, plan, options) {
   }
 }
 
+async function runMinecraftInstallWithProgress(kit, plan, options = {}) {
+  const { createInstallProgressTracker } = await getMinecraftKit();
+  const tracker = createInstallProgressTracker(plan, { throttleMs: 200 });
+  const unsubscribe = tracker.subscribe(sendInstallProgress);
+  try {
+    return await runMinecraftInstall(kit, plan, { ...options, onEvent: tracker.onEvent });
+  } finally {
+    tracker.finish();
+    unsubscribe();
+  }
+}
+
 async function installGameProfile() {
   const state = await getState();
   if (!state.loaderInstalled) {
     const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
     await fs.mkdir(state.gameDirectory, { recursive: true });
     const plan = await kit.install.plan(target);
-    await runMinecraftInstall(kit, plan);
+    await runMinecraftInstallWithProgress(kit, plan);
   }
   if (state.westronModSupported) await installBundledMenu(state.gameDirectory);
   return `Minecraft ${state.gameVersion} ${state.loader} profili hazır.`;
@@ -860,7 +871,7 @@ async function installFabric() {
   const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
   const plan = await kit.install.plan(target);
   const { DownloadCategories } = await getMinecraftKit();
-  await runMinecraftInstall(kit, plan, {
+  await runMinecraftInstallWithProgress(kit, plan, {
     actionCategories: new Set([
       DownloadCategories.FABRIC_LIBRARY,
       DownloadCategories.RUNTIME_FILE,
@@ -890,15 +901,8 @@ async function launchGame({ mode, offlineUsername }) {
   const username = microsoftSession?.account.username ?? offlineUsername;
   const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
   const plan = await kit.install.plan(target);
-  const { AuthModes, createInstallProgressTracker } = await getMinecraftKit();
-  const tracker = createInstallProgressTracker(plan, { throttleMs: 200 });
-  const unsubscribe = tracker.subscribe(sendInstallProgress);
-  try {
-    await runMinecraftInstall(kit, plan, { onEvent: tracker.onEvent });
-  } finally {
-    tracker.finish();
-    unsubscribe();
-  }
+  const { AuthModes } = await getMinecraftKit();
+  await runMinecraftInstallWithProgress(kit, plan);
   if (state.westronModSupported) await installBundledMenu(state.gameDirectory);
   await writeLocalSkinIdentity(state.gameDirectory, username);
 
@@ -1447,14 +1451,6 @@ ipcMain.handle('app:open-content-folder', async (_event, type) => {
   const error = await shell.openPath(directory);
   if (error) throw new Error(error);
 });
-ipcMain.handle('app:copy-server', (_event, address) => {
-  if (typeof address !== 'string' || address.length > 255 || !/^[a-zA-Z0-9.-]+(?::\d{1,5})?$/.test(address)) {
-    throw new Error('Sunucu adresi geçerli bir alan adı/IP ve isteğe bağlı port olmalıdır.');
-  }
-  clipboard.writeText(address);
-  return true;
-});
-
 function setupApplicationMenu() {
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(Menu.buildFromTemplate([

@@ -41,6 +41,7 @@ beforeEach(async () => {
 
 test('allows enough time for large release uploads to arrive through a slow connection', () => {
   assert.equal(app.server.requestTimeout, 90 * 60 * 1000);
+  assert.equal(app.skinDatabase.pragma('user_version', { simple: true }), 4);
 });
 
 afterEach(async () => {
@@ -152,6 +153,7 @@ test('health, OpenAPI document and implemented routes are available', async () =
     ['POST /api/v1/auth/reset-password', '/api/v1/auth/reset-password'],
     ['POST /api/v1/auth/logout', '/api/v1/auth/logout'],
     ['GET /api/v1/me', '/api/v1/me'],
+    ['PUT /api/v1/me/minecraft-profile', '/api/v1/me/minecraft-profile'],
     ['POST /api/v1/me/skin', '/api/v1/me/skin'],
     ['PUT /api/v1/me/skin', '/api/v1/me/skin'],
     ['DELETE /api/v1/me/skin', '/api/v1/me/skin'],
@@ -169,6 +171,59 @@ test('health, OpenAPI document and implemented routes are available', async () =
     const [documentMethod, documentPath] = route.split(' ');
     assert.ok(document.paths[documentPath]?.[documentMethod.toLowerCase()], `Missing OpenAPI operation ${route}`);
   }
+});
+
+test('links Minecraft names to Westron profiles for public skin and cape lookup', async () => {
+  const account = await createAccount('WestronOwner');
+  const link = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/me/minecraft-profile',
+    headers: bearer(account.accessToken),
+    payload: { username: 'MineCraftNick' },
+  });
+  assert.equal(link.statusCode, 200, link.body);
+
+  const skinRequest = multipartSkin(await createPng());
+  Object.assign(skinRequest.headers, bearer(account.accessToken));
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/skin', ...skinRequest })).statusCode, 201);
+  const capeRequest = multipartCape(await createPng(64, 32));
+  Object.assign(capeRequest.headers, bearer(account.accessToken));
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/cape', ...capeRequest })).statusCode, 201);
+
+  const profile = await app.inject({ method: 'GET', url: '/api/v1/profiles/minecraftNick' });
+  assert.equal(profile.statusCode, 200, profile.body);
+  assert.equal(profile.json().username, 'WestronOwner');
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/profiles/MineCraftNick/skin.png' })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/profiles/MineCraftNick/cape.png' })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/skin/profile/texture/login/MineCraftNick' })).statusCode, 200);
+
+  const duplicateLink = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/me/minecraft-profile',
+    headers: bearer(account.accessToken),
+    payload: { username: 'another!' },
+  });
+  assert.equal(duplicateLink.statusCode, 400);
+
+  const otherAccount = await createAccount('OtherOwner');
+  const conflictingLink = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/me/minecraft-profile',
+    headers: bearer(otherAccount.accessToken),
+    payload: { username: 'minecraftnick' },
+  });
+  assert.equal(conflictingLink.statusCode, 409);
+
+  const usernameCollision = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/register',
+    payload: {
+      username: 'MinecraftNick',
+      email: 'alias-collision@example.test',
+      password: 'correct horse battery staple',
+    },
+  });
+  assert.equal(usernameCollision.statusCode, 409);
 });
 
 test('only the verified update publisher can upload a hash-matched release feed', async () => {

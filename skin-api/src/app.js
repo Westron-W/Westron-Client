@@ -319,6 +319,12 @@ export async function buildApp({
     required: ['username'],
     properties: { username: { type: 'string', pattern: '^[A-Za-z0-9_]{3,16}$' } },
   };
+  const minecraftProfileBody = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['username'],
+    properties: { username: { type: 'string', pattern: '^[A-Za-z0-9_]{3,16}$' } },
+  };
   const registerBody = {
     type: 'object',
     additionalProperties: false,
@@ -601,11 +607,14 @@ export async function buildApp({
     validateCredentials({ email, password });
     const emailNormalized = normalizeEmail(email);
     const existing = database.prepare(`
-      SELECT username_normalized, email_normalized FROM users
-      WHERE username_normalized = ? OR email_normalized = ?
-    `).get(normalizeUsername(username), emailNormalized);
+      SELECT username_normalized, minecraft_username_normalized, email_normalized FROM users
+      WHERE username_normalized = ? OR minecraft_username_normalized = ? OR email_normalized = ?
+    `).get(normalizeUsername(username), normalizeUsername(username), emailNormalized);
     if (existing) {
-      const code = existing.username_normalized === normalizeUsername(username) ? 'username_taken' : 'email_taken';
+      const code = existing.username_normalized === normalizeUsername(username)
+        || existing.minecraft_username_normalized === normalizeUsername(username)
+        ? 'username_taken'
+        : 'email_taken';
       throw new ApiError(409, code, code === 'username_taken' ? 'Bu kullanıcı adı kullanımda.' : 'Bu e-posta adresi kullanımda.');
     }
     const credentials = await hashPassword(password);
@@ -871,6 +880,42 @@ export async function buildApp({
     return profileResponse(request.skinUser, skin, publicBaseUrl, cape);
   });
 
+  app.put('/api/v1/me/minecraft-profile', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'setMinecraftProfile',
+      tags: ['profiles'],
+      body: minecraftProfileBody,
+      response: {
+        200: { type: 'object', required: ['message'], properties: { message: { type: 'string' } } },
+        400: errorResponse,
+        401: errorResponse,
+        403: errorResponse,
+        409: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request, reply) => {
+    const minecraftUsername = request.body.username;
+    if (!validateUsername(minecraftUsername)) {
+      throw new ApiError(400, 'invalid_minecraft_username', 'Minecraft kullanıcı adı 3-16 karakter olmalıdır.');
+    }
+    const normalizedUsername = normalizeUsername(minecraftUsername);
+    const conflict = database.prepare(`
+      SELECT id FROM users
+      WHERE (username_normalized = ? OR minecraft_username_normalized = ?) AND id != ?
+    `).get(normalizedUsername, normalizedUsername, request.skinUser.id);
+    if (conflict) {
+      throw new ApiError(409, 'minecraft_username_taken', 'Bu Minecraft kullanıcı adı başka bir Westron profiline bağlı.');
+    }
+    database.prepare(`
+      UPDATE users
+      SET minecraft_username = ?, minecraft_username_normalized = ?
+      WHERE id = ?
+    `).run(minecraftUsername, normalizedUsername, request.skinUser.id);
+    return reply.send({ message: 'Minecraft kullanıcı adı Westron profiline bağlandı.' });
+  });
+
   app.post('/api/v1/me/skin', {
     ...skinUploadRouteConfig,
     schema: {
@@ -978,8 +1023,13 @@ export async function buildApp({
       },
     },
   }, async (request) => {
-    const user = database.prepare('SELECT id, username FROM users WHERE username_normalized = ?')
-      .get(normalizeUsername(request.params.username));
+    const normalizedUsername = normalizeUsername(request.params.username);
+    const user = database.prepare(`
+      SELECT id, username FROM users
+      WHERE username_normalized = ? OR minecraft_username_normalized = ?
+      ORDER BY CASE WHEN username_normalized = ? THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(normalizedUsername, normalizedUsername, normalizedUsername);
     if (!user) throw new ApiError(404, 'profile_not_found', 'Oyuncu profili bulunamadı.');
     const skin = database.prepare('SELECT model, updated_at FROM skins WHERE user_id = ?').get(user.id);
     const cape = database.prepare('SELECT updated_at FROM capes WHERE user_id = ?').get(user.id);
@@ -1004,8 +1054,14 @@ export async function buildApp({
     const skin = database.prepare(`
       SELECT skins.storage_key, skins.sha256 FROM skins
       JOIN users ON users.id = skins.user_id
-      WHERE users.username_normalized = ?
-    `).get(normalizeUsername(request.params.username));
+      WHERE users.username_normalized = ? OR users.minecraft_username_normalized = ?
+      ORDER BY CASE WHEN users.username_normalized = ? THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(
+      normalizeUsername(request.params.username),
+      normalizeUsername(request.params.username),
+      normalizeUsername(request.params.username),
+    );
     if (!skin) throw new ApiError(404, 'skin_not_found', 'Oyuncunun yüklenmiş bir skini yok.');
     reply.header('Access-Control-Allow-Origin', '*');
     const etag = `"${skin.sha256}"`;
@@ -1124,8 +1180,14 @@ export async function buildApp({
     const cape = database.prepare(`
       SELECT capes.storage_key, capes.sha256 FROM capes
       JOIN users ON users.id = capes.user_id
-      WHERE users.username_normalized = ?
-    `).get(normalizeUsername(request.params.username));
+      WHERE users.username_normalized = ? OR users.minecraft_username_normalized = ?
+      ORDER BY CASE WHEN users.username_normalized = ? THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(
+      normalizeUsername(request.params.username),
+      normalizeUsername(request.params.username),
+      normalizeUsername(request.params.username),
+    );
     if (!cape) throw new ApiError(404, 'cape_not_found', 'Oyuncunun yüklenmiş bir pelerini yok.');
     reply.header('Access-Control-Allow-Origin', '*');
     const etag = `"${cape.sha256}"`;
@@ -1137,8 +1199,13 @@ export async function buildApp({
   });
 
   app.get('/skin/profile/texture/login/:username', async (request, reply) => {
-    const user = database.prepare('SELECT id, username FROM users WHERE username_normalized = ?')
-      .get(normalizeUsername(request.params.username));
+    const normalizedUsername = normalizeUsername(request.params.username);
+    const user = database.prepare(`
+      SELECT id, username FROM users
+      WHERE username_normalized = ? OR minecraft_username_normalized = ?
+      ORDER BY CASE WHEN username_normalized = ? THEN 0 ELSE 1 END
+      LIMIT 1
+    `).get(normalizedUsername, normalizedUsername, normalizedUsername);
     if (!user) return reply.code(204).send();
     const skin = database.prepare('SELECT model, updated_at FROM skins WHERE user_id = ?').get(user.id);
     const cape = database.prepare('SELECT updated_at FROM capes WHERE user_id = ?').get(user.id);

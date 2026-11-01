@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { isAppLanguage, SUPPORTED_LANGUAGES, translate, translateUi, type AppLanguage } from './i18n';
 import {
   ArrowDownToLine, ArrowRight, Box, Check, ChevronDown, CircleHelp, Compass, Image,
-  Cpu, FolderOpen, Gamepad2, HardDrive, Layers3, LoaderCircle,
+  Cpu, FolderOpen, HardDrive, Layers3, LoaderCircle,
   Languages, LogOut, Package, Pause, Play, Plus, RefreshCw, RotateCcw, Search,
   Settings2, ShieldCheck, Sparkles, Sun, Trash2, Upload, UserRound, X,
 } from 'lucide-react';
@@ -56,7 +56,6 @@ export default function App() {
   const [packProjects, setPackProjects] = useState<ModrinthProject[]>([]);
   const [gameVersions, setGameVersions] = useState<MinecraftVersionOption[]>([]);
   const [query, setQuery] = useState('');
-  const [serverAddress, setServerAddress] = useState('');
   const [busy, setBusy] = useState('');
   const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null);
   const [notice, setNotice] = useState('');
@@ -82,6 +81,7 @@ export default function App() {
   const [westronProfile, setWestronProfile] = useState<WestronProfile | null>(null);
   const [skinAvatarFailed, setSkinAvatarFailed] = useState(false);
   const text = (value: string) => translateUi(state?.language ?? 'tr', value);
+  const installPercent = Math.max(0, Math.min(100, Math.round(installProgress?.overallPercent ?? 0)));
   const pageTitle = text(pageLabels[page]);
 
   useEffect(() => {
@@ -505,6 +505,28 @@ export default function App() {
               void window.nocturne.installUpdate().catch(reportError);
             }} />
           )}
+          {installProgress && ['profile', 'fabric', 'launch'].includes(busy) && (
+            <section
+              className="game-install-banner"
+              role="progressbar"
+              aria-label={busy === 'launch'
+                ? text('Oyun başlatılıyor…')
+                : `${state?.loader.toUpperCase() ?? 'MINECRAFT'} ${state?.gameVersion ?? ''} ${text('İndiriliyor')}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={installPercent}
+            >
+              <div className="game-install-progress-label">
+                <span>{busy === 'launch'
+                  ? text('Oyun başlatılıyor…')
+                  : `${state?.loader.toUpperCase()} ${state?.gameVersion} · ${text('İndiriliyor')}`}</span>
+                <strong>%{installPercent}</strong>
+              </div>
+              <div className="game-install-progress-track">
+                <span style={{ width: `${Math.max(0, Math.min(100, installProgress.overallPercent))}%` }} />
+              </div>
+            </section>
+          )}
 
           {page === 'home' && (
             <HomePage
@@ -513,10 +535,7 @@ export default function App() {
               microsoftBusy={microsoftBusy}
               offlineUsername={offlineUsername}
               setOfflineUsername={setOfflineUsername}
-              serverAddress={serverAddress}
-              setServerAddress={setServerAddress}
               busy={busy}
-              installProgress={installProgress}
               onInstall={() => perform('profile', () => window.nocturne.installGameProfile(), (message) => message || 'Oyun profili hazır.')}
               onInstallMenu={() => perform('menu', () => window.nocturne.installMenu(), (message) => message || 'Westron Client arayüzü kuruldu.')}
               onLaunchGame={() => perform('launch', () => window.nocturne.launchGame(microsoftAccount
@@ -525,7 +544,6 @@ export default function App() {
               onSignInMicrosoft={() => { void signInMicrosoft(); }}
               onCancelMicrosoftSignIn={() => { void cancelMicrosoftSignIn(); }}
               onSignOutMicrosoft={() => { void signOutMicrosoft(); }}
-              onCopyServer={() => perform('server', () => window.nocturne.copyServer(serverAddress), () => 'Sunucu adresi panoya kopyalandı.')}
               onOpenSettings={() => setPage('settings')}
               onMods={() => setPage('mods')}
             />
@@ -955,11 +973,10 @@ function PageHeading({ eyebrow, title, description, children }: {
   );
 }
 
-function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, setOfflineUsername, serverAddress, setServerAddress, busy, installProgress, onInstall, onInstallMenu, onLaunchGame, onSignInMicrosoft, onCancelMicrosoftSignIn, onSignOutMicrosoft, onCopyServer, onOpenSettings, onMods }: {
+function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, setOfflineUsername, busy, onInstall, onInstallMenu, onLaunchGame, onSignInMicrosoft, onCancelMicrosoftSignIn, onSignOutMicrosoft, onOpenSettings, onMods }: {
   state: LauncherState | null; microsoftAccount: MicrosoftAccount | null; microsoftBusy: boolean;
   offlineUsername: string; setOfflineUsername: (value: string) => void;
-  serverAddress: string; setServerAddress: (value: string) => void;
-  busy: string; installProgress: InstallProgress | null; onInstall: () => void; onInstallMenu: () => void; onLaunchGame: () => void; onCopyServer: () => void;
+  busy: string; onInstall: () => void; onInstallMenu: () => void; onLaunchGame: () => void;
   onSignInMicrosoft: () => void; onCancelMicrosoftSignIn: () => void; onSignOutMicrosoft: () => void;
   onOpenSettings: () => void; onMods: () => void;
 }) {
@@ -1025,11 +1042,7 @@ function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, set
             )}
             <button className="button button-primary button-large" onClick={primaryAction} disabled={Boolean(busy) || (!microsoftAccount && ready && !/^[A-Za-z0-9_]{3,16}$/.test(offlineUsername))}>
               {busy === 'fabric' || busy === 'launch' || busy === 'menu' ? <LoaderCircle className="spin" size={17} /> : ready ? <Play size={17} fill="currentColor" /> : <ArrowDownToLine size={17} />}
-              {busy === 'launch' && installProgress
-                ? installProgress.stage === 'finalize'
-                  ? t('Oyun başlatılıyor…')
-                  : `${t('İndiriliyor')} %${Math.min(99, Math.round(installProgress.overallPercent))}`
-                : primaryLabel}
+              {busy === 'launch' ? t('Oyun başlatılıyor…') : primaryLabel}
               <ArrowRight size={15} />
             </button>
             <button className="button button-ghost" onClick={onMods}><Sparkles size={16} />{t('Mod keşfet')}</button>
@@ -1056,14 +1069,6 @@ function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, set
           <div className="card-icon blue"><Box size={18} /></div><span className="card-kicker">{t('MOD KÜTÜPHANESİ')}</span>
           <div className="card-main"><strong>{state?.mods.length ?? 0} {t('mod yüklü')}</strong><span>{t('Uyumlu modları keşfet ve yönet.')}</span></div>
           <button className="round-arrow" onClick={onMods} aria-label={t('Modları keşfet')}><ArrowRight size={17} /></button>
-        </div>
-        <div className="info-card server-card">
-          <div className="card-icon green"><Gamepad2 size={18} /></div><span className="card-kicker">{t('SUNUCUYA KATIL')}</span>
-          <div className="server-input-row">
-            <input value={serverAddress} onChange={(event) => setServerAddress(event.target.value)} placeholder="play.sunucun.com" aria-label={t('Minecraft sunucu adresi')} />
-            <button className="round-arrow" onClick={onCopyServer} disabled={!serverAddress || Boolean(busy)} aria-label={t('Sunucu adresini kopyala')}><ArrowRight size={17} /></button>
-          </div>
-          <span className="server-hint">{t('Adresi panoya kopyala, oyunda bağlan.')}</span>
         </div>
       </div>
 

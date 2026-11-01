@@ -16,6 +16,7 @@ Fastify tabanlı, mevcut web sitesinden ve Microsoft/Minecraft girişinden ayrı
 | `POST` | `/api/v1/auth/request-password-reset` | `{ email }` için parola sıfırlama e-postası ister |
 | `POST` | `/api/v1/auth/reset-password` | `{ email, token, newPassword }` ile parolayı değiştirir ve tüm oturumları kapatır |
 | `GET` | `/api/v1/me` | Kimliği doğrulanmış kullanıcının profili |
+| `PUT` | `/api/v1/me/minecraft-profile` | Minecraft oyun adını Westron profiline bağlar |
 | `POST` / `PUT` / `DELETE` | `/api/v1/me/skin` | İlk skin yükleme / değiştirme / silme |
 | `POST` / `PUT` / `DELETE` | `/api/v1/me/cape` | Pelerin yükleme / değiştirme / silme |
 | `GET` | `/api/v1/profiles/{username}` | Herkese açık oyuncu profili ve skin modeli |
@@ -139,7 +140,9 @@ curl --fail https://westronskin.sytes.net/api/health
 
 ## Minecraft ve launcher entegrasyonu
 
-Backend'in skin/pelerin depolaması, oyunda diğer oyuncuların özel görünümlerinin gösterilmesinden ayrıdır. `fabric-mod` içindeki istemci modu, Minecraft 26.3 oyuncu görünümü yoluna client-only Mixin uygular ve Westron API'den skin ile pelerini yükler. Launcher, yerel oyuncu için farklı Minecraft ve Westron adlarını eşleştirebilir; diğer oyuncu istemcileri ise profili oyun adıyla aradığından Westron kullanıcı adıyla aynı oyun adı kullanılmalıdır. Diğer oyuncular için kaynak sırası Westron API, orijinal Minecraft profili ve desteklenen diğer herkese açık profil servisleridir. Oyuncu adları herkese açık profil sorguları için bu servislere gönderilir. Skin ve pelerin dosyaları `westron-skins` içinde önbelleğe alınır; geçici ağ hatalarında son geçerli görünüm korunur. Sunucu eklentisi gerekmez; ancak Westron görünümünü başka launcher kullanan oyunculara göstermek için oyuncuların Westron Fabric istemci modunu uyumlu profillerinin `mods` klasörüne eklemesi gerekir. Modsuz istemciler özel skin ve pelerinleri göremez. Westron yüklemesi Microsoft hesabındaki skini veya pelerini değiştirmez.
+Backend'in skin/pelerin depolaması, oyunda diğer oyuncuların özel görünümlerinin gösterilmesinden ayrıdır. `fabric-mod` içindeki istemci modu, Minecraft 26.3 oyuncu görünümü yoluna client-only Mixin uygular ve Westron API'den skin ile pelerini yükler. Westron Client, oyun başlatılırken kullanılan Minecraft adını oturum açmış Westron profiline bağlar; böylece farklı ad kullanan oyuncular da bulunabilir. Bu oyun adı diğer Westron istemcilerinde herkese açık profil aramasında kullanılır. Diğer oyuncular için kaynak sırası Westron API, orijinal Minecraft profili ve desteklenen diğer herkese açık profil servisleridir. Oyuncu adları herkese açık profil sorguları için bu servislere gönderilir. Skin ve pelerin dosyaları `westron-skins` içinde önbelleğe alınır; geçici ağ hatalarında son geçerli görünüm korunur. Sunucu eklentisi gerekmez; ancak Westron görünümünü başka launcher kullanan oyunculara göstermek için oyuncuların Westron Fabric istemci modunu uyumlu profillerinin `mods` klasörüne eklemesi gerekir. Modsuz istemciler özel skin ve pelerinleri göremez. Westron yüklemesi Microsoft hesabındaki skini veya pelerini değiştirmez.
+
+Minecraft adı eşleştirme uç noktasının kullanılabilmesi için güncel `skin-api` kodunu sunucuya dağıtın. API başlarken mevcut SQLite veritabanını otomatik olarak yeni alanlara yükseltir; veritabanı volume'ünü silmeyin.
 
 Launcher'ın **Skin & Pelerin** ekranında Westron hesabı kaydı, doğrulama, giriş, parola sıfırlama, çıkış ve skin/pelerin yükleme arayüzü bulunur. Electron ana süreci access/refresh token'larını işletim sisteminin `safeStorage` deposuyla şifreler; bu Westron hesabı Minecraft oyun oturumu sağlamaz ve oyun giriş yöntemini değiştirmez.
 

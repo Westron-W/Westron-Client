@@ -77,5 +77,4 @@ contextBridge.exposeInMainWorld('nocturne', {
   },
   openModsFolder: () => ipcRenderer.invoke('app:open-mods-folder'),
   openContentFolder: (type) => ipcRenderer.invoke('app:open-content-folder', type),
-  copyServer: (address) => ipcRenderer.invoke('app:copy-server', address),
 });

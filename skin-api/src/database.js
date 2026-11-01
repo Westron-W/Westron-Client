@@ -26,7 +26,7 @@ export async function migrateDatabase(database) {
     );
   `);
 
-  if (version >= 3) return;
+  if (version >= 4) return;
 
   if (version < 2) {
     const userColumns = new Set(database.pragma('table_info(users)').map((column) => column.name));
@@ -45,6 +45,10 @@ export async function migrateDatabase(database) {
       }
       if (!userColumns.has('password_algorithm')) {
         database.exec("ALTER TABLE users ADD COLUMN password_algorithm TEXT NOT NULL DEFAULT 'scrypt'");
+      }
+      if (!userColumns.has('minecraft_username')) database.exec('ALTER TABLE users ADD COLUMN minecraft_username TEXT');
+      if (!userColumns.has('minecraft_username_normalized')) {
+        database.exec('ALTER TABLE users ADD COLUMN minecraft_username_normalized TEXT');
       }
       if (legacySessions) database.exec('ALTER TABLE sessions RENAME TO sessions_legacy');
       database.exec(await readFile(path.join(ROOT, 'schema.sql'), 'utf8'));
@@ -71,5 +75,23 @@ export async function migrateDatabase(database) {
     }
   }
 
-  database.pragma('user_version = 3');
+  if (version < 3) database.pragma('user_version = 3');
+
+  const userColumns = new Set(database.pragma('table_info(users)').map((column) => column.name));
+  database.exec('BEGIN IMMEDIATE');
+  try {
+    if (!userColumns.has('minecraft_username')) database.exec('ALTER TABLE users ADD COLUMN minecraft_username TEXT');
+    if (!userColumns.has('minecraft_username_normalized')) {
+      database.exec('ALTER TABLE users ADD COLUMN minecraft_username_normalized TEXT');
+    }
+    database.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS users_minecraft_username_normalized_idx
+      ON users(minecraft_username_normalized) WHERE minecraft_username_normalized IS NOT NULL;
+    `);
+    database.pragma('user_version = 4');
+    database.exec('COMMIT');
+  } catch (error) {
+    database.exec('ROLLBACK');
+    throw error;
+  }
 }

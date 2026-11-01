@@ -10,11 +10,15 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   password_salt TEXT NOT NULL DEFAULT '',
   password_algorithm TEXT NOT NULL DEFAULT 'argon2id' CHECK (password_algorithm IN ('argon2id', 'scrypt')),
+  minecraft_username TEXT,
+  minecraft_username_normalized TEXT,
   created_at TEXT NOT NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_normalized_idx
   ON users(email_normalized) WHERE email_normalized IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_minecraft_username_normalized_idx
+  ON users(minecraft_username_normalized) WHERE minecraft_username_normalized IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -76,4 +80,4 @@ CREATE TABLE IF NOT EXISTS capes (
   updated_at TEXT NOT NULL
 );
 
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
