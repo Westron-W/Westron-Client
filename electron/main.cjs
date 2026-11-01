@@ -301,6 +301,7 @@ async function readSettings() {
         gameVersion: GAME_VERSION,
         loader: DEFAULT_LOADER,
         language: 'tr',
+        theme: 'dark',
         languageSetupComplete: false,
         profileNoticeDismissed: false,
       };
@@ -321,6 +322,7 @@ async function readSettings() {
     gameVersion: isSupportedGameVersion(saved.gameVersion) ? saved.gameVersion : GAME_VERSION,
     loader: SUPPORTED_LOADERS.has(saved.loader) ? saved.loader : DEFAULT_LOADER,
     language: ['tr', 'en', 'de', 'fr', 'es', 'ru', 'it'].includes(saved.language) ? saved.language : 'tr',
+    theme: saved.theme === 'light' ? 'light' : 'dark',
     languageSetupComplete: saved.languageSetupComplete === true,
     profileNoticeDismissed: saved.profileNoticeDismissed === true,
   };
@@ -1339,6 +1341,12 @@ ipcMain.handle('app:save-language', async (_event, language) => {
   if (!['tr', 'en', 'de', 'fr', 'es', 'ru', 'it'].includes(language)) throw new Error('Arayüz dili desteklenmiyor.');
   const settings = await readSettings();
   await saveSettings({ ...settings, language, languageSetupComplete: true });
+  return getState();
+});
+ipcMain.handle('app:save-theme', async (_event, theme) => {
+  if (theme !== 'dark' && theme !== 'light') throw new Error('Arayüz teması geçersiz.');
+  const settings = await readSettings();
+  await saveSettings({ ...settings, theme });
   return getState();
 });
 ipcMain.handle('app:install-game-profile', installGameProfile);

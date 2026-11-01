@@ -188,3 +188,106 @@ button { color: inherit; }
   .skin-3d-controls { align-items: flex-end; }
   .skin-3d-speed { width: 100%; margin-left: 0; }
 }
+
+html[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f3f5f9;
+  --panel: #ffffff;
+  --panel-raised: #f7f8fb;
+  --border: rgba(31, 41, 58, .12);
+  --muted: #657084;
+  --quiet: #7a8495;
+  --accent: #7559c8;
+  --accent-light: #6247b3;
+  --green: #23885c;
+  color: #354052;
+  background: var(--bg);
+}
+
+html[data-theme='light'] body,
+html[data-theme='light'] .app-shell,
+html[data-theme='light'] .main-area {
+  color: #354052;
+  background: var(--bg);
+}
+
+html[data-theme='light'] .app-shell :where(*) {
+  color: #354052 !important;
+}
+
+html[data-theme='light'] .app-shell :where(
+  .sidebar, .sidebar-profile, .sidebar-card, .topbar, .status-row, .info-card,
+  .mod-card, .library-stat, .library-panel, .settings-panel, .search-box,
+  .inline-callout, .empty-state, .microsoft-account-card, .game-install-banner,
+  .update-banner, .dependency-list, .dependency-item, .project-version-select select,
+  .language-select-label select, .sidebar-profile select, .offline-username input,
+  .skin-3d-stage, .setting-row, .system-row, .skin-3d-panel, .dependency-modal,
+  .language-setup-modal, .profile-directory, .mod-icon, .mod-action, .round-arrow,
+  .button-secondary, .button-ghost, .button-microsoft, .dependency-modal-close
+) {
+  border-color: var(--border) !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+}
+
+html[data-theme='light'] .sidebar {
+  background-color: rgba(255, 255, 255, .96) !important;
+}
+
+html[data-theme='light'] .hero-card {
+  border-color: rgba(117, 89, 200, .2);
+  background: radial-gradient(ellipse at 82% 47%, rgba(117, 89, 200, .13), transparent 38%), linear-gradient(110deg, #fff 0%, #f8f7fd 100%);
+}
+
+html[data-theme='light'] .nav-button.active,
+html[data-theme='light'] .mod-action,
+html[data-theme='light'] .round-arrow,
+html[data-theme='light'] .button-secondary,
+html[data-theme='light'] .button-ghost,
+html[data-theme='light'] .button-microsoft,
+html[data-theme='light'] .dependency-modal-close {
+  background-color: #f0f2f7 !important;
+}
+
+html[data-theme='light'] .nav-button.active {
+  border-color: rgba(117, 89, 200, .22);
+}
+
+html[data-theme='light'] .app-shell :where(.brand-name > span, .brand-mark, .nav-button.active .nav-icon, .nav-badge, .card-icon.violet, .card-icon.blue, .card-icon.green, .empty-icon, .dependency-modal-icon, .inline-callout > svg, .mod-icon-fallback, .text-button, .skin-3d-empty svg) {
+  color: #674bb8 !important;
+}
+
+html[data-theme='light'] .app-shell :where(.button-primary) {
+  color: #211b32 !important;
+}
+
+html[data-theme='light'] .app-shell :where(select) {
+  color-scheme: light;
+}
+
+html[data-theme='light'] .game-install-progress-track,
+html[data-theme='light'] .update-progress {
+  background: #e4e7ef;
+}
+
+html[data-theme='light'] .app-shell :where(.text-good, .account-message, .update-up-to-date .update-banner-icon) {
+  color: #18764d !important;
+}
+
+html[data-theme='light'] .app-shell :where(.text-warn) {
+  color: #925c16 !important;
+}
+
+html[data-theme='light'] .dependency-modal-backdrop {
+  background: rgba(31, 41, 58, .28);
+}
+
+html[data-theme='light'] .skin-3d-empty {
+  background: rgba(255, 255, 255, .84);
+}
+
+html[data-theme='light'] .skin-3d-error,
+html[data-theme='light'] .account-message.account-error,
+html[data-theme='light'] .publisher-error {
+  color: #a52c32 !important;
+}

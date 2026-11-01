@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 type AppLanguage = 'tr' | 'en' | 'de' | 'fr' | 'es' | 'ru' | 'it';
+type AppTheme = 'dark' | 'light';
 
 interface LauncherState {
   minecraftDir: string;
@@ -15,6 +16,7 @@ interface LauncherState {
   fabricInstalled: boolean;
   westronModSupported: boolean;
   language: AppLanguage;
+  theme: AppTheme;
   languageSetupComplete: boolean;
   menuModInstalled: boolean;
   javaAvailable: string;
@@ -129,6 +131,7 @@ interface Window {
       dismissNotice?: boolean,
     ) => Promise<{ requiresConfirmation: true; profileDirectory: string } | { requiresConfirmation: false; state: LauncherState }>;
     saveLanguage: (language: LauncherState['language']) => Promise<LauncherState>;
+    saveTheme: (theme: AppTheme) => Promise<LauncherState>;
     installGameProfile: () => Promise<string>;
     installFabric: () => Promise<string>;
     launchGame: (options: { mode: 'offline' | 'microsoft'; offlineUsername?: string }) => Promise<string>;

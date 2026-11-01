@@ -89,6 +89,10 @@ export default function App() {
   }, [state?.language]);
 
   useEffect(() => {
+    document.documentElement.dataset.theme = state?.theme ?? 'dark';
+  }, [state?.theme]);
+
+  useEffect(() => {
     let active = true;
     if (!window.nocturne) return () => { active = false; };
     void window.nocturne.getWestronAccount().then(async (account) => {
@@ -251,6 +255,20 @@ export default function App() {
       setState(await window.nocturne.saveLanguage(language));
       setNotice(`${translate(language, 'language')}: ${SUPPORTED_LANGUAGES.find((item) => item.code === language)?.label ?? language}`);
       setLanguageSetupRequired(false);
+      return true;
+    } catch (reason) {
+      reportError(reason);
+      return false;
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function saveTheme(theme: AppTheme): Promise<boolean> {
+    setBusy('theme');
+    setError('');
+    try {
+      setState(await window.nocturne.saveTheme(theme));
       return true;
     } catch (reason) {
       reportError(reason);
@@ -456,8 +474,8 @@ export default function App() {
         <nav className="nav-list">
           <NavButton icon={<Compass />} label={text('Genel Bakış')} active={page === 'home'} onClick={() => setPage('home')} />
           <NavButton icon={<Sparkles />} label={text('Mod keşfet')} active={page === 'mods'} onClick={() => setPage('mods')} badge="MODRINTH" />
-          <NavButton icon={<Image />} label={text('Kaynak paketleri')} active={page === 'resourcepacks'} onClick={() => setPage('resourcepacks')} />
-          <NavButton icon={<Sun />} label={text('Shader paketleri')} active={page === 'shaders'} onClick={() => setPage('shaders')} />
+          <NavButton icon={<Image />} label={text('Kaynak paketleri')} active={page === 'resourcepacks'} onClick={() => setPage('resourcepacks')} badge="MODRINTH" />
+          <NavButton icon={<Sun />} label={text('Shader paketleri')} active={page === 'shaders'} onClick={() => setPage('shaders')} badge="MODRINTH" />
           <NavButton icon={<Package />} label={text('Kütüphane')} active={page === 'library'} onClick={() => setPage('library')} count={installedCount} />
           <NavButton icon={<UserRound />} label={text('Skin & Pelerin')} active={page === 'appearance'} onClick={() => setPage('appearance')} />
         </nav>
@@ -609,6 +627,8 @@ export default function App() {
               state={state}
               language={state?.language ?? 'tr'}
               onLanguageChange={(language: LauncherState['language']) => { void saveLanguage(language); }}
+              theme={state?.theme ?? 'dark'}
+              onThemeChange={(theme: AppTheme) => { void saveTheme(theme); }}
               onChooseFolder={() => perform('folder', () => window.nocturne.chooseMinecraftDir())}
               busy={busy}
               updateStatus={updateStatus}
@@ -1165,7 +1185,7 @@ function ModrinthPackPage({ type, projects, query, setQuery, busy, installedFile
   return (
     <>
       <PageHeading
-        eyebrow={`MODRINTH • MINECRAFT ${gameVersion}`}
+        eyebrow={`MODRINTH • ${loader.toUpperCase()} ${gameVersion}`}
         title={t(isShader ? 'Işığı değiştir.' : 'Dünyanı yeniden tasarla.')}
         description={isShader
           ? `${t('Minecraft ile uyumlu shader paketlerini keşfet ve tek tıkla yükle.')} ${gameVersion}`
@@ -1320,8 +1340,8 @@ function ModList({ mods, busy, onRemove }: { mods: LauncherState['mods']; busy: 
   </div>)}</div>;
 }
 
-function SettingsPage({ state, language, onLanguageChange, onChooseFolder, busy, updateStatus, onCheckUpdates }: {
-  state: LauncherState | null; language: AppLanguage; onLanguageChange: (language: AppLanguage) => void; onChooseFolder: () => void; busy: string;
+function SettingsPage({ state, language, onLanguageChange, theme, onThemeChange, onChooseFolder, busy, updateStatus, onCheckUpdates }: {
+  state: LauncherState | null; language: AppLanguage; onLanguageChange: (language: AppLanguage) => void; theme: AppTheme; onThemeChange: (theme: AppTheme) => void; onChooseFolder: () => void; busy: string;
   updateStatus: UpdateStatus | null; onCheckUpdates: () => void;
 }) {
   const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
@@ -1337,6 +1357,19 @@ function SettingsPage({ state, language, onLanguageChange, onChooseFolder, busy,
             <span className="visually-hidden">{t('language')}</span>
             <select value={language} onChange={(event) => { if (isAppLanguage(event.target.value)) onLanguageChange(event.target.value); }} disabled={Boolean(busy)}>
               {SUPPORTED_LANGUAGES.map((item) => <option value={item.code} key={item.code}>{item.label}</option>)}
+            </select>
+          </label>
+        </div>
+      </section>
+      <section className="settings-panel">
+        <div className="settings-heading"><div className="card-icon violet"><Sun size={18} /></div><div><h3>{t('theme')}</h3><span>{t('themeDescription')}</span></div></div>
+        <div className="setting-row">
+          <div><strong>{t('theme')}</strong><span>{t('savedOnDevice')}</span></div>
+          <label className="language-select-label">
+            <span className="visually-hidden">{t('theme')}</span>
+            <select value={theme} onChange={(event) => { if (event.target.value === 'dark' || event.target.value === 'light') onThemeChange(event.target.value); }} disabled={Boolean(busy)}>
+              <option value="dark">{t('darkTheme')}</option>
+              <option value="light">{t('lightTheme')}</option>
             </select>
           </label>
         </div>

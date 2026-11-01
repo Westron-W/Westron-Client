@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('nocturne', {
   saveGameOptions: (gameVersion, loader, confirmNewProfile, dismissNotice) =>
     ipcRenderer.invoke('app:save-game-options', gameVersion, loader, confirmNewProfile, dismissNotice),
   saveLanguage: (language) => ipcRenderer.invoke('app:save-language', language),
+  saveTheme: (theme) => ipcRenderer.invoke('app:save-theme', theme),
   installGameProfile: () => ipcRenderer.invoke('app:install-game-profile'),
   installFabric: () => ipcRenderer.invoke('app:install-fabric'),
   launchGame: (options) => ipcRenderer.invoke('app:launch-game', options),
