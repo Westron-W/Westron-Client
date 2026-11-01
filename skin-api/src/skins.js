@@ -21,7 +21,7 @@ export async function validateSkinPng(buffer) {
     const image = sharp(buffer, { limitInputPixels: 4096, failOn: 'error' });
     metadata = await image.metadata();
     if (metadata.format !== 'png'
-      || metadata.pages !== undefined && metadata.pages !== 1
+      || (metadata.pages !== undefined && metadata.pages !== 1)
       || !((metadata.width === 64 && metadata.height === 64)
         || (metadata.width === 64 && metadata.height === 32))) {
       throw new ApiError(422, 'invalid_skin_dimensions', 'Skin ölçüsü 64x64 veya 64x32 piksel olmalıdır.');
@@ -33,6 +33,38 @@ export async function validateSkinPng(buffer) {
   }
   if (normalized.length > MAX_SKIN_BYTES) {
     throw new ApiError(413, 'invalid_skin_size', 'İşlenmiş skin PNG dosyası 1 MiB sınırını aşıyor.');
+  }
+  return { buffer: normalized, sha256: createHash('sha256').update(normalized).digest('hex') };
+}
+
+export async function validateCapePng(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < PNG_SIGNATURE.length || buffer.length > MAX_SKIN_BYTES) {
+    throw new ApiError(413, 'invalid_cape_size', 'Pelerin PNG dosyası boş olamaz ve 1 MiB sınırını aşamaz.');
+  }
+  if (!buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    throw new ApiError(415, 'invalid_cape_format', 'Dosya geçerli bir PNG pelerin olmalıdır.');
+  }
+
+  let metadata;
+  let normalized;
+  try {
+    const image = sharp(buffer, { limitInputPixels: 4096, failOn: 'error' });
+    metadata = await image.metadata();
+    const isStandard = metadata.width === 64 && metadata.height === 32;
+    const isRatio = metadata.width / metadata.height === 2 && metadata.width <= 1024 && metadata.height <= 512;
+    const isOptifine = metadata.width === 22 && metadata.height === 17;
+    if (metadata.format !== 'png'
+      || (metadata.pages !== undefined && metadata.pages !== 1)
+      || (!isStandard && !isRatio && !isOptifine)) {
+      throw new ApiError(422, 'invalid_cape_dimensions', 'Pelerin ölçüsü 64x32 veya 2:1 oranında olmalıdır.');
+    }
+    normalized = await sharp(buffer, { limitInputPixels: 4096, failOn: 'error' }).png().toBuffer();
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(415, 'invalid_cape_image', 'PNG dosyası bozuk veya okunamıyor.');
+  }
+  if (normalized.length > MAX_SKIN_BYTES) {
+    throw new ApiError(413, 'invalid_cape_size', 'İşlenmiş pelerin PNG dosyası 1 MiB sınırını aşıyor.');
   }
   return { buffer: normalized, sha256: createHash('sha256').update(normalized).digest('hex') };
 }
@@ -79,6 +111,50 @@ export async function persistSkin({ userId, model, image, skinsDir, database, lo
     }
   }
   return database.prepare('SELECT user_id, storage_key, model, sha256, updated_at FROM skins WHERE user_id = ?')
+    .get(userId);
+}
+
+export async function persistCape({ userId, image, skinsDir, database, logger, replace }) {
+  const storageKey = path.posix.join(userId, `cape-${randomUUID()}.png`);
+  const destination = path.join(skinsDir, storageKey);
+  const temporary = `${destination}.tmp`;
+  await mkdir(path.dirname(destination), { recursive: true });
+  let previous;
+  try {
+    await writeFile(temporary, image.buffer, { flag: 'wx', mode: 0o600 });
+    await rename(temporary, destination);
+    previous = database.transaction(() => {
+      const current = database.prepare('SELECT storage_key FROM capes WHERE user_id = ?').get(userId);
+      if (replace && !current) {
+        throw new ApiError(404, 'cape_not_found', 'Değiştirilecek bir pelerin bulunamadı.');
+      }
+      if (!replace && current) {
+        throw new ApiError(409, 'cape_exists', 'Pelerin zaten mevcut; değiştirmek için PUT kullanın.');
+      }
+      database.prepare(`
+        INSERT INTO capes (user_id, storage_key, sha256, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+          storage_key = excluded.storage_key,
+          sha256 = excluded.sha256,
+          updated_at = excluded.updated_at
+      `).run(userId, storageKey, image.sha256, new Date().toISOString());
+      return current;
+    })();
+  } catch (error) {
+    await rm(temporary, { force: true });
+    await rm(destination, { force: true });
+    throw error;
+  }
+
+  if (previous && previous.storage_key !== storageKey) {
+    try {
+      await rm(path.join(skinsDir, previous.storage_key), { force: true });
+    } catch (error) {
+      logger.error({ err: error }, 'Could not remove replaced cape file');
+    }
+  }
+  return database.prepare('SELECT user_id, storage_key, sha256, updated_at FROM capes WHERE user_id = ?')
     .get(userId);
 }
 

@@ -98,6 +98,19 @@ function multipartSkin(buffer, { contentType = 'image/png' } = {}) {
   };
 }
 
+function multipartCape(buffer, { contentType = 'image/png' } = {}) {
+  const boundary = 'westron-skin-api-boundary';
+  const payload = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="cape"; filename="cape.png"\r\nContent-Type: ${contentType}\r\n\r\n`),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return {
+    payload,
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  };
+}
+
 function bearer(token) {
   return { authorization: `Bearer ${token}` };
 }
@@ -113,6 +126,8 @@ test('health, OpenAPI document and implemented routes are available', async () =
   assert.equal(document.openapi, '3.1.0');
   assert.equal(document.paths['/updates/{filename}']?.get?.operationId, 'downloadUpdateAsset');
   assert.equal(document.paths['/api/v1/admin/updates/{filename}']?.post?.operationId, 'publishUpdateAsset');
+  assert.ok(document.components.schemas.Profile.required.includes('cape'));
+  assert.ok(document.components.requestBodies.CapePng.content['multipart/form-data'].schema.required.includes('cape'));
   const resendOperation = document.paths['/api/v1/auth/resend-verification']?.post;
   assert.equal(resendOperation?.operationId, 'resendVerification');
   assert.ok(resendOperation.responses['503']);
@@ -140,8 +155,12 @@ test('health, OpenAPI document and implemented routes are available', async () =
     ['POST /api/v1/me/skin', '/api/v1/me/skin'],
     ['PUT /api/v1/me/skin', '/api/v1/me/skin'],
     ['DELETE /api/v1/me/skin', '/api/v1/me/skin'],
+    ['POST /api/v1/me/cape', '/api/v1/me/cape'],
+    ['PUT /api/v1/me/cape', '/api/v1/me/cape'],
+    ['DELETE /api/v1/me/cape', '/api/v1/me/cape'],
     ['GET /api/v1/profiles/{username}', '/api/v1/profiles/:username'],
     ['GET /api/v1/profiles/{username}/skin.png', '/api/v1/profiles/:username/skin.png'],
+    ['GET /api/v1/profiles/{username}/cape.png', '/api/v1/profiles/:username/cape.png'],
     ['GET /updates/{filename}', '/updates/:filename'],
     ['POST /api/v1/admin/updates/{filename}', '/api/v1/admin/updates/:filename'],
   ]) {
@@ -157,9 +176,9 @@ test('only the verified update publisher can upload a hash-matched release feed'
   const otherAccount = await createAccount('RegularUpdater', 'regular@example.test');
   const installer = Buffer.from('test installer payload');
   const hash = createHash('sha512').update(installer).digest('base64');
-  const filename = 'Westron Client Setup 1.0.exe';
+  const filename = 'Westron Client Setup 1.0.1.exe';
   const manifest = Buffer.from([
-    'version: 1.0.5',
+    'version: 1.0.1',
     'files:',
     `  - url: ${filename}`,
     `    sha512: ${hash}`,
@@ -212,6 +231,7 @@ test('registration requires one-time email verification and login stores Argon2i
   assert.equal(unverifiedLogin.statusCode, 403);
 
   const rawToken = mailTokens.verification[0];
+  assert.match(rawToken, /^\d{6}$/);
   const storedHash = app.skinDatabase.prepare('SELECT token_hash FROM email_verification_tokens').get().token_hash;
   assert.notEqual(storedHash, rawToken);
   assert.equal(storedHash, createHash('sha256').update(rawToken).digest('hex'));
@@ -330,12 +350,15 @@ test('skin upload and public profile flow only works for verified accounts', asy
   const pngResponse = await app.inject({ method: 'GET', url: '/api/v1/profiles/SkinOwner/skin.png' });
   assert.equal(pngResponse.statusCode, 200);
   assert.equal(pngResponse.headers['content-type'], 'image/png');
+  assert.equal(pngResponse.headers['access-control-allow-origin'], '*');
   assert.deepEqual(pngResponse.rawPayload, firstPng);
-  assert.equal((await app.inject({
+  const cachedSkinResponse = await app.inject({
     method: 'GET',
     url: '/api/v1/profiles/SkinOwner/skin.png',
     headers: { 'if-none-match': pngResponse.headers.etag },
-  })).statusCode, 304);
+  });
+  assert.equal(cachedSkinResponse.statusCode, 304);
+  assert.equal(cachedSkinResponse.headers['access-control-allow-origin'], '*');
 
   const secondPng = await createPng(64, 32);
   const replacement = multipartSkin(secondPng);
@@ -364,6 +387,18 @@ test('rejects malformed and oversized skin uploads and protects authenticated ro
   const unsupportedMedia = multipartSkin(await createPng(), { contentType: 'application/octet-stream' });
   unsupportedMedia.headers.authorization = `Bearer ${account.accessToken}`;
   assert.equal((await app.inject({ method: 'POST', url: '/api/v1/me/skin', ...unsupportedMedia })).statusCode, 415);
+
+  const unsupportedRequest = await app.inject({
+    method: 'POST',
+    url: '/api/v1/me/cape',
+    headers: {
+      ...bearer(account.accessToken),
+      'content-type': 'text/plain',
+    },
+    payload: 'not multipart data',
+  });
+  assert.equal(unsupportedRequest.statusCode, 415, unsupportedRequest.body);
+  assert.equal(unsupportedRequest.json().error.code, 'unsupported_media_type');
 
   const oversized = multipartSkin(Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(1024 * 1024)]));
   oversized.headers.authorization = `Bearer ${account.accessToken}`;
@@ -626,4 +661,47 @@ test('migrates legacy sessions and skins, then lets the owner claim email and up
   } finally {
     await legacyApp.close();
   }
+});
+
+
+test('cape upload, public profile and legacy texture compatibility flow', async () => {
+  const account = await createAccount('CapePlayer');
+  const capePng = await createPng(64, 32);
+  const capeReq = multipartCape(capePng);
+  capeReq.headers.authorization = `Bearer ${account.accessToken}`;
+  const upload = await app.inject({
+    method: 'POST',
+    url: '/api/v1/me/cape',
+    ...capeReq,
+  });
+  assert.equal(upload.statusCode, 201, upload.body);
+  assert.equal(upload.json().cape.url, 'https://westronskin.example.test/api/v1/profiles/CapePlayer/cape.png');
+
+  const myProfile = await app.inject({
+    method: 'GET',
+    url: '/api/v1/me',
+    headers: bearer(account.accessToken),
+  });
+  assert.equal(myProfile.statusCode, 200, myProfile.body);
+  assert.equal(myProfile.json().cape.url, upload.json().cape.url);
+
+  const profile = await app.inject({ method: 'GET', url: '/api/v1/profiles/capeplayer' });
+  assert.equal(profile.statusCode, 200);
+  assert.equal(profile.json().cape.url, 'https://westronskin.example.test/api/v1/profiles/CapePlayer/cape.png');
+
+  const capeFile = await app.inject({ method: 'GET', url: '/api/v1/profiles/CapePlayer/cape.png' });
+  assert.equal(capeFile.statusCode, 200);
+  assert.equal(capeFile.headers['access-control-allow-origin'], '*');
+  assert.deepEqual(capeFile.rawPayload, capePng);
+
+  const legacyTexture = await app.inject({ method: 'GET', url: '/skin/profile/texture/login/CapePlayer' });
+  assert.equal(legacyTexture.statusCode, 200);
+  assert.equal(legacyTexture.json().CAPE.url, 'https://westronskin.example.test/api/v1/profiles/CapePlayer/cape.png');
+
+  const del = await app.inject({
+    method: 'DELETE',
+    url: '/api/v1/me/cape',
+    headers: bearer(account.accessToken),
+  });
+  assert.equal(del.statusCode, 204);
 });

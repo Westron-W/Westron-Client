@@ -17,11 +17,15 @@ Fastify tabanlı, mevcut web sitesinden ve Microsoft/Minecraft girişinden ayrı
 | `POST` | `/api/v1/auth/reset-password` | `{ email, token, newPassword }` ile parolayı değiştirir ve tüm oturumları kapatır |
 | `GET` | `/api/v1/me` | Kimliği doğrulanmış kullanıcının profili |
 | `POST` / `PUT` / `DELETE` | `/api/v1/me/skin` | İlk skin yükleme / değiştirme / silme |
+| `POST` / `PUT` / `DELETE` | `/api/v1/me/cape` | Pelerin yükleme / değiştirme / silme |
 | `GET` | `/api/v1/profiles/{username}` | Herkese açık oyuncu profili ve skin modeli |
 | `GET` | `/api/v1/profiles/{username}/skin.png` | Herkese açık PNG skin; ETag cache desteği |
+| `GET` | `/api/v1/profiles/{username}/cape.png` | Herkese açık PNG pelerin; ETag cache desteği |
 | `GET` | `/api/openapi.yaml` | Gerçek route'larla eşleştirilmiş OpenAPI 3.1 |
 
 Skin istekleri multipart/form-data içindeki `skin` alanıyla yüklenir. PNG imzası ve içerik dekoderi kontrol edilir; yalnızca 64x64 veya 64x32 piksel ve en fazla 1 MiB kabul edilir. `X-Skin-Model` isteğe bağlı `classic`/`slim` başlığıdır. Hesap parolaları Argon2id, e-posta doğrulama/parola sıfırlama kodları yalnızca SHA-256 özetiyle tutulur. Access ve refresh token'lar da veritabanında yalnızca hash olarak saklanır; refresh token rotasyonu eski token tekrar kullanımında oturumu iptal eder.
+
+Herkese açık skin ve pelerin PNG uç noktaları WebGL tabanlı 3D önizleyicilerin dokuları canvas'a yükleyebilmesi için `Access-Control-Allow-Origin: *` döndürür; bu yalnızca herkese açık salt-okunur görsel rotalarına uygulanır.
 
 ## Yerel geliştirme ve test
 
@@ -89,6 +93,27 @@ VDS'ye, Docker'a veya Nginx Proxy Manager'a bu geliştirme sırasında erişilme
 
 Güncelleme kurulum dosyaları büyük olduğundan API sunucusu en fazla 90 dakikalık yavaş HTTP isteklerine izin verecek şekilde yapılandırılmıştır. Bu kod değiştiğinde VDS'de API imajını yeniden derleyip servisi yeniden oluşturun; Nginx Proxy Manager üzerinden `/api/` isteği için kullanılan `client_body_timeout` ve `proxy_read_timeout` ayarlarının da uzun yüklemelere izin verdiğini kontrol edin.
 
+### Pelerin yükleme 404 hatası
+
+Launcher'da `POST` (ilk yükleme) ve `PUT` (değiştirme) `/api/v1/me/cape` uç noktaları kullanılır. Bu uç noktalar bu depodaki API kodunda tanımlıdır; canlı alan adından alınan 404, çalışan VDS container'ının eski bir API sürümü kullandığı veya `/api/` proxy yönlendirmesinin farklı servise gittiği anlamına gelir. Launcher güncellemesi tek başına canlı API'yi güncellemez; VDS'ye bu deponun güncel `skin-api` kaynaklarını aktarın.
+
+Önce `skin-api-data` volume'ünü yedekleyin ve yukarıdaki mevcut NPM/ağ/yönlendirme yapılandırmasını değiştirmeyin. Kaynakları VDS'ye aktardıktan sonra `skin-api` dizininde yalnızca API imajını yeniden oluşturup başlatın:
+
+```bash
+docker compose up -d --build westron-skin-api
+docker compose ps
+curl --fail https://westronskin.sytes.net/api/openapi.yaml
+```
+
+OpenAPI yanıtında `/api/v1/me/cape` için `post`, `put` ve `delete` metotlarını doğrulayın. Ardından geçerli bir PNG dosyasıyla yetkisiz POST ve PUT isteklerinin `401` verdiğini kontrol edin; `404` olmamalıdır. `PNG_DOSYASI` yer tutucusunu sunucuda bulunan gerçek bir PNG dosyasının yoluyla değiştirin:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' -X POST -F 'cape=@PNG_DOSYASI' https://westronskin.sytes.net/api/v1/me/cape
+curl -sS -o /dev/null -w '%{http_code}\n' -X PUT -F 'cape=@PNG_DOSYASI' https://westronskin.sytes.net/api/v1/me/cape
+```
+
+Herhangi biri `404` döndürürse proxy/route deployment'ı hâlâ eski veya yanlış hedefe yöneliyordur. Bu doğrulama başarılı olmadan pelerin yüklemesinin canlı serviste düzeldiği varsayılmamalıdır.
+
 ### Yedekleme ve geri yükleme
 
 Compose'un gerçek volume adını `docker volume ls` ile belirleyin; varsayılan proje dizin adı `skin-api` ise genellikle `skin-api_skin-api-data` olur. Tutarlı dosya kopyası için yalnız API container'ını durdurup, yedek aldıktan sonra yeniden başlatın:
@@ -114,8 +139,8 @@ curl --fail https://westronskin.sytes.net/api/health
 
 ## Minecraft ve launcher entegrasyonu
 
-Backend'in skin çalışması, oyunda diğer oyuncuların özel skinlerinin gösterilmesinden ayrıdır. `fabric-mod` içindeki istemci modu, Minecraft 26.3 `AbstractClientPlayer.getSkin()` yoluna client-only Mixin uygular. Launcher, Minecraft'ta seçili yerel oyun adını ve oturum açmış Westron hesabının kullanıcı adını `westron-skins/local-player.properties` dosyasına yazar; böylece bu iki ad farklı olsa da yerel oyuncu Westron skin profilini kullanır. Diğer oyuncular için kaynak sırası Westron API, orijinal Minecraft profili ve TLauncher profil servisidir. TLauncher profil JSON'unda görsel adresi HTTP olarak dönse bile yalnızca izin verilen TLauncher host/path doğrulandıktan sonra HTTPS üzerinden istenir. Oyuncu adları herkese açık profil sorguları için bu servislere gönderilir. PNG'ler ve son geçerli model `westron-skins` içinde önbelleğe alınır; her oyuncu beş dakikada bir yenilenir, geçici ağ hatalarında cache korunur. PNG, arka plan iş parçacığında Minecraft `NativeImage` ile çözülür; `DynamicTexture` ana render thread'inde `ResourceTexture.texturePath()` altında texture manager'a kaydedilir. Minecraft 26.3 `SkinTextureDownloader` metodu HTTP bağlantısı istediğinden yerel `file:` cache URL'siyle kullanılmaz. 64x32 legacy skinler Minecraft 26.3 bytecode'unda incelenen kopyalama ve alpha işlemleriyle 64x64 texture'a dönüştürülür. Classic ve slim modelleri desteklenir. Sunucu eklentisi gerekmez; ancak skinleri görmek için sunucuya bağlanan her oyuncunun Westron Fabric istemci modunu kullanması gerekir. Modsuz istemciler custom skinleri göremez. TLauncher profil servisi resmi ve kararlı bir API olarak belgelenmemiştir; servis yanıtı değişirse Mojang ve Westron kaynakları çalışmaya devam eder. Microsoft hesabına skin yüklenmez veya hesabın mevcut skini değiştirilmez.
+Backend'in skin/pelerin depolaması, oyunda diğer oyuncuların özel görünümlerinin gösterilmesinden ayrıdır. `fabric-mod` içindeki istemci modu, Minecraft 26.3 oyuncu görünümü yoluna client-only Mixin uygular ve Westron API'den skin ile pelerini yükler. Launcher, yerel oyuncu için farklı Minecraft ve Westron adlarını eşleştirebilir; diğer oyuncu istemcileri ise profili oyun adıyla aradığından Westron kullanıcı adıyla aynı oyun adı kullanılmalıdır. Diğer oyuncular için kaynak sırası Westron API, orijinal Minecraft profili ve desteklenen diğer herkese açık profil servisleridir. Oyuncu adları herkese açık profil sorguları için bu servislere gönderilir. Skin ve pelerin dosyaları `westron-skins` içinde önbelleğe alınır; geçici ağ hatalarında son geçerli görünüm korunur. Sunucu eklentisi gerekmez; ancak Westron görünümünü başka launcher kullanan oyunculara göstermek için oyuncuların Westron Fabric istemci modunu uyumlu profillerinin `mods` klasörüne eklemesi gerekir. Modsuz istemciler özel skin ve pelerinleri göremez. Westron yüklemesi Microsoft hesabındaki skini veya pelerini değiştirmez.
 
-Launcher Ayarlar ekranında Westron hesabı kaydı, doğrulama, giriş, parola sıfırlama, çıkış ve kendi skinini yükleme arayüzü bulunur. Electron ana süreci access/refresh token'larını işletim sisteminin `safeStorage` deposuyla şifreler; bu Westron hesabı Minecraft oyun oturumu sağlamaz ve mevcut çevrimdışı başlatmayı değiştirmez.
+Launcher'ın **Skin & Pelerin** ekranında Westron hesabı kaydı, doğrulama, giriş, parola sıfırlama, çıkış ve skin/pelerin yükleme arayüzü bulunur. Electron ana süreci access/refresh token'larını işletim sisteminin `safeStorage` deposuyla şifreler; bu Westron hesabı Minecraft oyun oturumu sağlamaz ve oyun giriş yöntemini değiştirmez.
 
 Önemli sınırlama: mevcut repo analizinde Microsoft giriş akışı bulunmadı; launcher şu anda çevrimdışı Minecraft başlatıyor. Microsoft hesabıyla oyun girişi eklenmedi. Önceki analizde minecraft-kit'in Microsoft→Xbox/XSTS→Minecraft akışı görüldü ancak MSAL token'ından Minecraft oyun oturumu üretme yöntemi doğrulanmadı. Bu nedenle Microsoft login korunmuş veya MSAL entegrasyonu çalışıyor denemez. Microsoft client secret launcher'a eklenmemelidir.

@@ -24,6 +24,16 @@ test('adds a verified Maven Central mirror for the affected ASM artifact', () =>
   assert.equal(plan.actions[0], action);
 });
 
+test('adds mirrors for other ASM artifacts', () => {
+  const treeUrl = 'https://maven.fabricmc.net/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar';
+  const action = { kind: 'download-file', url: treeUrl, target: 'asm-tree.jar' };
+  const plan = { actions: [action], totalActions: 1 };
+
+  const mirrored = addVerifiedMavenMirrors(plan);
+  assert.equal(mirrored.actions[0].url[0], 'https://repo1.maven.org/maven2/org/ow2/asm/asm-tree/9.10.1/asm-tree-9.10.1.jar');
+  assert.equal(mirrored.actions[0].expectedSha1, 'e244332a17564c1d1572449399a842de35881be2');
+});
+
 test('preserves existing integrity metadata and avoids duplicate mirror URLs', () => {
   const action = {
     kind: 'download-file',

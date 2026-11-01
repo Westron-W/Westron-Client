@@ -13,6 +13,7 @@ tags:
   - name: authentication
   - name: profiles
   - name: skins
+  - name: capes
   - name: updates
 paths:
   /api/health:
@@ -297,6 +298,50 @@ paths:
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/me/cape:
+    post:
+      operationId: uploadCape
+      tags: [capes]
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: "#/components/requestBodies/CapePng" }
+      responses:
+        "201": { $ref: "#/components/responses/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidCape" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: changeCape
+      tags: [capes]
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: "#/components/requestBodies/CapePng" }
+      responses:
+        "200": { $ref: "#/components/responses/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidCape" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteMyCape
+      tags: [capes]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Cape deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
   /api/v1/profiles/{username}:
     get:
       operationId: getPlayerProfile
@@ -334,6 +379,32 @@ paths:
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/profiles/{username}/cape.png:
+    get:
+      operationId: getPlayerCape
+      tags: [capes]
+      parameters:
+        - { $ref: "#/components/parameters/Username" }
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Validated PNG cape.
+          headers:
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+        "304": { description: Cape has not changed. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
 components:
   securitySchemes:
     bearerAuth:
@@ -365,6 +436,19 @@ components:
                 type: string
                 format: binary
                 description: PNG image of 64x64 or 64x32 pixels, maximum 1 MiB.
+    CapePng:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [cape]
+            additionalProperties: false
+            properties:
+              cape:
+                type: string
+                format: binary
+                description: PNG cape image of 64x32 pixels, 2:1 aspect ratio, or 22x17 OptiFine format, maximum 1 MiB.
   responses:
     SessionTokens:
       description: Short-lived access token and rotating refresh token.
@@ -377,7 +461,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Message" }
     Profile:
-      description: Westron profile and optional public skin.
+      description: Westron profile and optional public skin and cape.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Profile" }
@@ -418,6 +502,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     InvalidSkin:
       description: PNG is invalid or its dimensions are unsupported.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidCape:
+      description: PNG cape is invalid or its dimensions are unsupported.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -464,14 +553,14 @@ components:
       required: [email, token]
       properties:
         email: { type: string, format: email, maxLength: 254 }
-        token: { type: string, minLength: 40, maxLength: 50, writeOnly: true }
+        token: { type: string, minLength: 6, maxLength: 50, writeOnly: true }
     PasswordReset:
       type: object
       additionalProperties: false
       required: [email, token, newPassword]
       properties:
         email: { type: string, format: email, maxLength: 254 }
-        token: { type: string, minLength: 40, maxLength: 50, writeOnly: true }
+        token: { type: string, minLength: 6, maxLength: 50, writeOnly: true }
         newPassword: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
     RefreshRequest:
       type: object
@@ -504,7 +593,7 @@ components:
     Profile:
       type: object
       additionalProperties: false
-      required: [username, skin]
+      required: [username, skin, cape]
       properties:
         username: { type: string }
         skin:
@@ -515,6 +604,15 @@ components:
               required: [model, url, updatedAt]
               properties:
                 model: { type: string, enum: [classic, slim] }
+                url: { type: string, format: uri }
+                updatedAt: { type: string, format: date-time }
+        cape:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [url, updatedAt]
+              properties:
                 url: { type: string, format: uri }
                 updatedAt: { type: string, format: date-time }
     Error:

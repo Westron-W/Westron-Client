@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import argon2 from 'argon2';
 import { promisify } from 'node:util';
 import { ApiError } from './errors.js';
@@ -60,6 +60,11 @@ export async function verifyPassword(password, { algorithm, salt, hash }) {
 
 export function createId() {
   return randomUUID();
+}
+
+export function createVerificationCode() {
+  const token = String(randomInt(100000, 1000000));
+  return { token, tokenHash: hashToken(token) };
 }
 
 export function createOpaqueToken() {

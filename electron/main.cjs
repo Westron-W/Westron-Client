@@ -4,7 +4,11 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
-const { createWestronApiClient, registerWestronIpcHandlers } = require('./westron-api.cjs');
+const {
+  createWestronAuthRefresher,
+  createWestronApiClient,
+  registerWestronIpcHandlers,
+} = require('./westron-api.cjs');
 const { writeLocalSkinIdentity: writeLocalSkinIdentityFile } = require('./westron-skin-identity.cjs');
 const {
   ModCompatibilityError,
@@ -18,15 +22,56 @@ const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-dow
 const { getUpdateUploadTimeoutMs, readUpdateFiles } = require('./update-publisher.cjs');
 
 const GAME_VERSION = '26.3';
-const DISPLAY_VERSION = '1.0';
+const DISPLAY_VERSION = '1.0.1';
+const DEFAULT_LOADER = 'fabric';
+const SUPPORTED_LOADERS = new Set(['vanilla', 'fabric', 'forge']);
+const GAME_VERSION_MIN = [1, 8, 0];
+const GAME_VERSION_MAX = [26, 3, 0];
 const UPDATE_PUBLISHER_EMAIL = 'ermiscaner78@gmail.com';
 const westronApi = createWestronApiClient();
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const WESTRON_AUTH_FILE = () => path.join(app.getPath('userData'), 'westron-auth.bin');
 const MICROSOFT_AUTH_FILE = () => path.join(app.getPath('userData'), 'microsoft-auth.bin');
 let minecraftKitPromise;
+let minecraftVersionsCache = { expiresAt: 0, versions: [] };
 let updateStatus = { status: 'idle', currentVersion: DISPLAY_VERSION, percent: 0 };
 let updateCheckPromise = null;
+const refreshWestronAuth = createWestronAuthRefresher({
+  readCredentials: readWestronAuth,
+  refresh: (input) => westronApi.refresh(input),
+  saveCredentials: saveWestronAuth,
+  clearCredentials: clearWestronAuth,
+});
+
+function isSupportedReleaseVersion(value) {
+  if (typeof value !== 'string' || !/^\d+\.\d+(?:\.\d+)?$/.test(value)) return false;
+  const parsed = value.split('.').map(Number);
+  while (parsed.length < 3) parsed.push(0);
+  const compare = (left, right) => {
+    for (let index = 0; index < 3; index += 1) {
+      if (left[index] !== right[index]) return left[index] - right[index];
+    }
+    return 0;
+  };
+  return compare(parsed, GAME_VERSION_MIN) >= 0 && compare(parsed, GAME_VERSION_MAX) <= 0;
+}
+
+function isSupportedGameVersion(value) {
+  return isSupportedReleaseVersion(value)
+    || (typeof value === 'string' && /^(?:\d{2}\.\d+-snapshot-\d+|\d{2}w\d{2}[a-z])$/i.test(value));
+}
+
+function getInstanceDir(minecraftDir, gameVersion, loader) {
+  return path.join(minecraftDir, 'westron-profiles', gameVersion, loader);
+}
+
+function profileVersionIsInstalled(versions, gameVersion, loader) {
+  if (loader === 'vanilla') return versions.includes(gameVersion);
+  if (loader === 'fabric') {
+    return versions.some((name) => name.startsWith('fabric-loader-') && name.endsWith(`-${gameVersion}`));
+  }
+  return versions.some((name) => name.startsWith(`${gameVersion}-forge-`));
+}
 
 function publishUpdateStatus(nextStatus) {
   updateStatus = { ...updateStatus, ...nextStatus, currentVersion: DISPLAY_VERSION };
@@ -257,7 +302,17 @@ async function readSettings() {
         if (legacyError.code !== 'ENOENT') throw legacyError;
       }
     }
-    if (contents === undefined) return { minecraftDir: getDefaultMinecraftDir(), offlineUsername: 'Player' };
+    if (contents === undefined) {
+      return {
+        minecraftDir: getDefaultMinecraftDir(),
+        offlineUsername: 'Player',
+        gameVersion: GAME_VERSION,
+        loader: DEFAULT_LOADER,
+        language: 'tr',
+        languageSetupComplete: false,
+        profileNoticeDismissed: false,
+      };
+    }
   }
   let saved;
   try {
@@ -271,6 +326,11 @@ async function readSettings() {
   return {
     minecraftDir: typeof saved.minecraftDir === 'string' ? saved.minecraftDir : getDefaultMinecraftDir(),
     offlineUsername: typeof saved.offlineUsername === 'string' ? saved.offlineUsername : 'Player',
+    gameVersion: isSupportedGameVersion(saved.gameVersion) ? saved.gameVersion : GAME_VERSION,
+    loader: SUPPORTED_LOADERS.has(saved.loader) ? saved.loader : DEFAULT_LOADER,
+    language: ['tr', 'en', 'de', 'fr', 'es', 'ru', 'it'].includes(saved.language) ? saved.language : 'tr',
+    languageSetupComplete: saved.languageSetupComplete === true,
+    profileNoticeDismissed: saved.profileNoticeDismissed === true,
   };
 }
 
@@ -396,12 +456,6 @@ async function westronLogin({ email, password }) {
   return credentials.account;
 }
 
-async function refreshWestronAuth(credentials) {
-  const renewed = await westronApi.refresh({ refreshToken: credentials.refreshToken });
-  await saveWestronAuth(renewed);
-  return renewed;
-}
-
 async function westronGetProfile() {
   let credentials = await readWestronAuth();
   if (!credentials) return null;
@@ -456,6 +510,87 @@ async function westronUploadSkin(model) {
   }
 }
 
+
+async function westronUploadCape() {
+  const credentials = await readWestronAuth();
+  if (!credentials) throw new Error('Önce Westron hesabınızla giriş yapın.');
+  const selection = await dialog.showOpenDialog({
+    title: 'PNG pelerin dosyasını seç',
+    properties: ['openFile'],
+    filters: [{ name: 'PNG pelerin', extensions: ['png'] }],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return { cancelled: true };
+  const filePath = selection.filePaths[0];
+  const fileBuffer = await fs.readFile(filePath);
+  if (fileBuffer.length > 1024 * 1024) throw new Error('Pelerin PNG dosyası 1 MiB sınırını aşamaz.');
+  let accessToken = credentials.accessToken;
+  let profile = await westronApi.getProfile(accessToken).catch(async (error) => {
+    if (error.status !== 401) throw error;
+    const renewed = await refreshWestronAuth(credentials);
+    accessToken = renewed.accessToken;
+    return westronApi.getProfile(accessToken);
+  });
+  const upload = () => {
+    const form = new FormData();
+    form.append('cape', new Blob([fileBuffer], { type: 'image/png' }), path.basename(filePath));
+    return westronApi.request('/api/v1/me/cape', {
+      method: profile?.cape ? 'PUT' : 'POST',
+      body: form,
+      accessToken,
+    });
+  };
+  try {
+    profile = await upload();
+    return { cancelled: false, profile };
+  } catch (error) {
+    if (error.status !== 401) throw error;
+    const renewed = await refreshWestronAuth(credentials);
+    accessToken = renewed.accessToken;
+    profile = await upload();
+    return { cancelled: false, profile };
+  }
+}
+
+async function westronDeleteCape() {
+  const credentials = await readWestronAuth();
+  if (!credentials) throw new Error('Önce Westron hesabınızla giriş yapın.');
+  let accessToken = credentials.accessToken;
+  const del = () => westronApi.request('/api/v1/me/cape', {
+    method: 'DELETE',
+    accessToken,
+  });
+  try {
+    await del();
+    return westronGetProfile();
+  } catch (error) {
+    if (error.status !== 401) throw error;
+    const renewed = await refreshWestronAuth(credentials);
+    accessToken = renewed.accessToken;
+    await del();
+    return westronGetProfile();
+  }
+}
+
+async function westronDeleteSkin() {
+  const credentials = await readWestronAuth();
+  if (!credentials) throw new Error('Önce Westron hesabınızla giriş yapın.');
+  let accessToken = credentials.accessToken;
+  const del = () => westronApi.request('/api/v1/me/skin', {
+    method: 'DELETE',
+    accessToken,
+  });
+  try {
+    await del();
+    return westronGetProfile();
+  } catch (error) {
+    if (error.status !== 401) throw error;
+    const renewed = await refreshWestronAuth(credentials);
+    accessToken = renewed.accessToken;
+    await del();
+    return westronGetProfile();
+  }
+}
+
 async function westronLogout() {
   const credentials = await readWestronAuth();
   if (!credentials) return 'Westron hesabından çıkış yapıldı.';
@@ -502,38 +637,42 @@ async function listMods(minecraftDir) {
 
 async function getState() {
   const settings = await readSettings();
-  let fabricInstalled = false;
+  const gameDirectory = getInstanceDir(settings.minecraftDir, settings.gameVersion, settings.loader);
+  let loaderInstalled = false;
   try {
-    const versions = await fs.readdir(path.join(settings.minecraftDir, 'versions'));
-    fabricInstalled = versions.some((name) => name.startsWith('fabric-loader-') && name.endsWith(`-${GAME_VERSION}`));
+    const versions = await fs.readdir(path.join(gameDirectory, 'versions'));
+    loaderInstalled = profileVersionIsInstalled(versions, settings.gameVersion, settings.loader);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  const mods = await listMods(settings.minecraftDir);
-  const resourcePacksDir = getContentDirectory(settings.minecraftDir, 'resourcepack');
-  const shaderPacksDir = getContentDirectory(settings.minecraftDir, 'shader');
+  const mods = await listMods(gameDirectory);
+  const resourcePacksDir = getContentDirectory(gameDirectory, 'resourcepack');
+  const shaderPacksDir = getContentDirectory(gameDirectory, 'shader');
   const resourcePacks = await listFiles(resourcePacksDir, ['.zip']);
   const shaderPacks = await listFiles(shaderPacksDir, ['.zip']);
   const resourcePackInstalls = await readInstallIndex(resourcePacksDir, '.zip');
   const shaderPackInstalls = await readInstallIndex(shaderPacksDir, '.zip');
-  const modInstalls = await readInstallIndex(getModsDir(settings.minecraftDir), '.jar');
+  const modInstalls = await readInstallIndex(getModsDir(gameDirectory), '.jar');
   return {
     ...settings,
+    gameDirectory,
     version: app.getVersion(),
     displayVersion: DISPLAY_VERSION,
     microsoftAuthConfigured: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
       process.env.MINECRAFT_KIT_MSA_CLIENT_ID || 'bcfe67e2-a947-4621-a650-81db09205316'
     ),
-    gameVersion: GAME_VERSION,
-    fabricInstalled,
-    javaAvailable: await findJava(settings.minecraftDir),
+    loaderInstalled,
+    fabricInstalled: settings.loader === 'fabric' && loaderInstalled,
+    westronModSupported: settings.loader === 'fabric' && settings.gameVersion === GAME_VERSION,
+    javaAvailable: await findJava(gameDirectory),
     mods,
     resourcePacks,
     shaderPacks,
     resourcePackProjects: Object.keys(resourcePackInstalls),
     shaderProjects: Object.keys(shaderPackInstalls),
     modrinthModProjects: Object.keys(modInstalls),
-    menuModInstalled: mods.some((mod) => mod.name === 'westron-client-skin-1.0.jar'),
+    menuModInstalled: settings.loader === 'fabric' && settings.gameVersion === GAME_VERSION
+      && mods.some((mod) => mod.name === 'westron-client-skin-1.0.1.jar'),
   };
 }
 
@@ -596,8 +735,8 @@ async function findJava(minecraftDir) {
 }
 
 async function installBundledMenu(minecraftDir) {
-  const jarName = 'westron-client-skin-1.0.jar';
-  const legacyJarNames = ['westron-client-skin-1.0.0.jar', 'westron-client-menu-1.0.0.jar', 'nocturne-menu-1.0.0.jar'];
+  const jarName = 'westron-client-skin-1.0.1.jar';
+  const legacyJarNames = ['westron-client-skin-1.0.jar', 'westron-client-skin-1.0.0.jar', 'westron-client-menu-1.0.0.jar', 'nocturne-menu-1.0.0.jar'];
   const sourcePath = app.isPackaged
     ? path.join(process.resourcesPath, jarName)
     : path.join(__dirname, '..', 'fabric-mod', 'build', 'libs', jarName);
@@ -630,6 +769,31 @@ async function writeLocalSkinIdentity(minecraftDir, minecraftUsername) {
   await writeLocalSkinIdentityFile(minecraftDir, minecraftUsername, westronUsername);
 }
 
+
+class DetachedProcessSpawner {
+  spawn(command, args, options) {
+    const child = spawn(command, [...args], {
+      cwd: options.cwd,
+      env: options.env === undefined ? process.env : { ...process.env, ...options.env },
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    return {
+      pid: child.pid ?? -1,
+      stdout: new (require('node:stream').Readable)({ read() { this.push(null); } }),
+      stderr: new (require('node:stream').Readable)({ read() { this.push(null); } }),
+      exited: new Promise((resolve) => {
+        child.once('exit', (code, signal) => resolve({ code, signal }));
+        child.once('error', () => resolve({ code: 1, signal: null }));
+      }),
+      kill(signal) {
+        return child.kill(signal);
+      },
+    };
+  }
+}
+
 async function getMinecraftKit() {
   if (!minecraftKitPromise) {
     minecraftKitPromise = import('@loontail/minecraft-kit').then(({
@@ -643,7 +807,7 @@ async function getMinecraftKit() {
       createInstallProgressTracker,
       toOnlineAuth,
     }) => ({
-      kit: new MinecraftKit(),
+      kit: new MinecraftKit({ spawner: new DetachedProcessSpawner() }),
       Loaders,
       AuthModes,
       asAzureClientId,
@@ -657,13 +821,13 @@ async function getMinecraftKit() {
   return minecraftKitPromise;
 }
 
-async function resolveFabricTarget(minecraftDir) {
+async function resolveGameTarget(minecraftDir, gameVersion, loader) {
   const { kit, Loaders, asMinecraftVersionId } = await getMinecraftKit();
   const target = await kit.targets.resolve({
-    id: 'westron-client-fabric',
-    directory: minecraftDir,
-    minecraft: { version: asMinecraftVersionId(GAME_VERSION) },
-    loader: { type: Loaders.FABRIC },
+    id: `westron-client-${gameVersion}-${loader}`,
+    directory: getInstanceDir(minecraftDir, gameVersion, loader),
+    minecraft: { version: asMinecraftVersionId(gameVersion) },
+    loader: { type: Loaders[loader.toUpperCase()] },
   });
   return { kit, target };
 }
@@ -676,9 +840,24 @@ async function runMinecraftInstall(kit, plan, options) {
   }
 }
 
+async function installGameProfile() {
+  const state = await getState();
+  if (!state.loaderInstalled) {
+    const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
+    await fs.mkdir(state.gameDirectory, { recursive: true });
+    const plan = await kit.install.plan(target);
+    await runMinecraftInstall(kit, plan);
+  }
+  if (state.westronModSupported) await installBundledMenu(state.gameDirectory);
+  return `Minecraft ${state.gameVersion} ${state.loader} profili hazır.`;
+}
+
 async function installFabric() {
   const state = await getState();
-  const { kit, target } = await resolveFabricTarget(state.minecraftDir);
+  if (state.loader !== 'fabric' || state.gameVersion !== GAME_VERSION) {
+    throw new Error('Bu işlem yalnızca Minecraft 26.3 Fabric profili için kullanılabilir.');
+  }
+  const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
   const plan = await kit.install.plan(target);
   const { DownloadCategories } = await getMinecraftKit();
   await runMinecraftInstall(kit, plan, {
@@ -687,8 +866,8 @@ async function installFabric() {
       DownloadCategories.RUNTIME_FILE,
     ]),
   });
-  await installBundledMenu(state.minecraftDir);
-  return `Fabric ${GAME_VERSION} ve Westron Client kuruldu.`;
+  await installBundledMenu(state.gameDirectory);
+  return `Fabric ${state.gameVersion} ve Westron Client kuruldu.`;
 }
 
 function sendInstallProgress(snapshot) {
@@ -705,11 +884,11 @@ async function launchGame({ mode, offlineUsername }) {
   const settings = await readSettings();
   if (mode === 'offline') await saveSettings({ ...settings, offlineUsername });
   const state = await getState();
-  if (!state.fabricInstalled) throw new Error(`Önce Minecraft ${GAME_VERSION} için Fabric’i kurun.`);
+  if (!state.loaderInstalled) throw new Error(`Önce Minecraft ${state.gameVersion} ${state.loader} profilini kurun.`);
 
   const microsoftSession = mode === 'microsoft' ? await microsoftAuth.getLaunchSession() : null;
   const username = microsoftSession?.account.username ?? offlineUsername;
-  const { kit, target } = await resolveFabricTarget(state.minecraftDir);
+  const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
   const plan = await kit.install.plan(target);
   const { AuthModes, createInstallProgressTracker } = await getMinecraftKit();
   const tracker = createInstallProgressTracker(plan, { throttleMs: 200 });
@@ -720,8 +899,8 @@ async function launchGame({ mode, offlineUsername }) {
     tracker.finish();
     unsubscribe();
   }
-  await installBundledMenu(state.minecraftDir);
-  await writeLocalSkinIdentity(state.minecraftDir, username);
+  if (state.westronModSupported) await installBundledMenu(state.gameDirectory);
+  await writeLocalSkinIdentity(state.gameDirectory, username);
 
   const composition = await kit.launch.compose(target, {
     auth: microsoftSession?.auth ?? { mode: AuthModes.OFFLINE, username },
@@ -737,6 +916,7 @@ async function launchGame({ mode, offlineUsername }) {
       window.webContents.send('app:game-exited', { username, ...exit });
     }
   });
+  app.quit();
   return `Minecraft ${username} adıyla başlatıldı.`;
 }
 
@@ -750,11 +930,41 @@ function modrinthHeaders() {
   return { 'User-Agent': `WestronClient/${DISPLAY_VERSION} (launcher)` };
 }
 
-async function searchModrinth(type, query) {
+async function getMinecraftVersions() {
+  if (Date.now() < minecraftVersionsCache.expiresAt) return minecraftVersionsCache.versions;
+  const response = await fetch('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', {
+    headers: modrinthHeaders(),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error(`Minecraft sürüm listesi alınamadı (${response.status}).`);
+  const manifest = await response.json();
+  if (!Array.isArray(manifest.versions)) throw new Error('Minecraft sürüm listesi beklenen biçimde değil.');
+  const releases = manifest.versions
+    .filter((version) => version.type === 'release' && isSupportedReleaseVersion(version.id))
+    .map((version) => ({ id: version.id, kind: 'release' }));
+  const latestSnapshot = manifest.versions.find((version) => version.type === 'snapshot');
+  if (latestSnapshot) releases.unshift({ id: latestSnapshot.id, kind: 'snapshot' });
+  minecraftVersionsCache = { expiresAt: Date.now() + 60 * 60 * 1000, versions: releases };
+  return releases;
+}
+
+async function assertKnownMinecraftVersion(gameVersion) {
+  if (!isSupportedGameVersion(gameVersion)) throw new Error('Minecraft sürümü geçersiz.');
+  const versions = await getMinecraftVersions();
+  if (!versions.some((version) => version.id === gameVersion)) {
+    throw new Error('Minecraft sürümü listede değil veya artık desteklenmiyor. Sürüm seçimini yenileyin.');
+  }
+}
+
+async function searchModrinth(type, query, gameVersion, loader) {
   assertModrinthType(type);
+  await assertKnownMinecraftVersion(gameVersion);
+  if (type === 'mod' && !['fabric', 'forge'].includes(loader)) {
+    throw new Error('Mod aramak ve kurmak için Fabric veya Forge seçin.');
+  }
   const facets = type === 'mod'
-    ? [['project_type:mod'], [`versions:${GAME_VERSION}`], ['categories:fabric']]
-    : [[`project_type:${type}`], [`versions:${GAME_VERSION}`]];
+    ? [['project_type:mod'], [`versions:${gameVersion}`], [`categories:${loader}`]]
+    : [[`project_type:${type}`], [`versions:${gameVersion}`]];
   const params = new URLSearchParams({
     query,
     facets: JSON.stringify(facets),
@@ -779,10 +989,14 @@ async function searchModrinth(type, query) {
   }));
 }
 
-async function getProjectVersions(projectId, type = 'mod') {
+async function getProjectVersions(projectId, type = 'mod', gameVersion = GAME_VERSION, loader = DEFAULT_LOADER) {
   assertModrinthType(type);
-  const filters = { game_versions: JSON.stringify([GAME_VERSION]) };
-  if (type === 'mod') filters.loaders = JSON.stringify(['fabric']);
+  await assertKnownMinecraftVersion(gameVersion);
+  const filters = { game_versions: JSON.stringify([gameVersion]) };
+  if (type === 'mod') {
+    if (!['fabric', 'forge'].includes(loader)) throw new Error('Mod kurulumu için Fabric veya Forge seçin.');
+    filters.loaders = JSON.stringify([loader]);
+  }
   const params = new URLSearchParams(filters);
   const response = await fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(projectId)}/version?${params}`, {
     headers: modrinthHeaders(),
@@ -794,9 +1008,9 @@ async function getProjectVersions(projectId, type = 'mod') {
   return versions;
 }
 
-async function getCompatibleVersion(projectId) {
-  const versions = await getProjectVersions(projectId);
-  return selectCompatibleVersion(versions, GAME_VERSION, 'fabric');
+async function getCompatibleVersion(projectId, gameVersion, loader) {
+  const versions = await getProjectVersions(projectId, 'mod', gameVersion, loader);
+  return selectCompatibleVersion(versions, gameVersion, loader);
 }
 
 async function getVersionById(versionId) {
@@ -860,21 +1074,29 @@ async function downloadModrinthFile(file, directory, expectedExtension) {
   return { fileName: file.filename, installed: true };
 }
 
-async function resolveModInstallPlan(projectId) {
+async function resolveModInstallPlan(projectId, gameVersion, loader, selectedVersionId) {
   if (!/^[a-zA-Z0-9_-]+$/.test(projectId)) throw new Error('Geçersiz Modrinth proje kimliği.');
   const state = await getState();
-  if (!state.fabricInstalled) throw new Error('Önce Minecraft 26.3 için Fabric profilini kurun.');
+  if (!['fabric', 'forge'].includes(loader)) throw new Error('Mod kurmak için Fabric veya Forge seçin.');
+  if (state.gameVersion !== gameVersion || state.loader !== loader) {
+    throw new Error('Oyun sürümü veya loader değişti. Listeyi yenileyip kurulumu yeniden başlatın.');
+  }
+  if (!state.loaderInstalled) throw new Error(`Önce Minecraft ${gameVersion} ${loader} profilini kurun.`);
 
   const projectTitles = new Map();
   async function titleFor(id) {
     if (!projectTitles.has(id)) projectTitles.set(id, getProjectTitle(id));
     return projectTitles.get(id);
   }
-  const rootVersions = await getProjectVersions(projectId);
+  let rootVersions = await getProjectVersions(projectId, 'mod', gameVersion, loader);
+  if (selectedVersionId) {
+    rootVersions = rootVersions.filter((version) => version.id === selectedVersionId);
+    if (!rootVersions.length) throw new Error('Seçilen yayın seçili Minecraft sürümü veya loader ile uyumlu değil.');
+  }
   const result = await selectInstallableVersion(
     rootVersions,
-    GAME_VERSION,
-    'fabric',
+    gameVersion,
+    loader,
     async (rootVersion) => {
       const plan = [];
       const visited = new Set();
@@ -882,17 +1104,18 @@ async function resolveModInstallPlan(projectId) {
         const versionKey = version.id || version.project_id;
         if (!versionKey || visited.has(versionKey)) return;
         visited.add(versionKey);
-        if (!selectCompatibleVersion([version], GAME_VERSION, 'fabric')) {
-          throw new ModCompatibilityError(`"${title}" için Minecraft ${GAME_VERSION} Fabric sürümü uyumlu değil.`);
+        if (!selectCompatibleVersion([version], gameVersion, loader)) {
+          throw new ModCompatibilityError(`"${title}" için Minecraft ${gameVersion} ${loader} sürümü uyumlu değil.`);
         }
         for (const dependency of version.dependencies || []) {
           if (dependency.dependency_type !== 'required') continue;
           const dependencyVersion = await resolveDependencyVersion(dependency, {
-            gameVersion: GAME_VERSION,
-            loader: 'fabric',
+            gameVersion,
+            loader,
             dependencyLabel: dependency.project_id || dependency.version_id,
             getVersionById,
-            getCompatibleVersion,
+            getCompatibleVersion: (dependencyProjectId) =>
+              getCompatibleVersion(dependencyProjectId, gameVersion, loader),
           });
           const requiredProjectId = dependencyVersion.project_id || dependency.project_id;
           const dependencyTitle = requiredProjectId
@@ -906,15 +1129,15 @@ async function resolveModInstallPlan(projectId) {
       return plan;
     },
   );
-  if (!result) throw new Error(`Minecraft ${GAME_VERSION} ve Fabric ile uyumlu mod sürümü bulunamadı.`);
+  if (!result) throw new Error(`Minecraft ${gameVersion} ${loader} ile uyumlu mod sürümü bulunamadı.`);
 
-  const modsDir = getModsDir(state.minecraftDir);
+  const modsDir = getModsDir(state.gameDirectory);
   await fs.mkdir(modsDir, { recursive: true });
   return { plan: result.plan, modsDir };
 }
 
-async function installMod(projectId, confirmedDependencyIds = null) {
-  const { plan, modsDir } = await resolveModInstallPlan(projectId);
+async function installMod(projectId, gameVersion, loader, selectedVersionId = null, confirmedDependencyIds = null) {
+  const { plan, modsDir } = await resolveModInstallPlan(projectId, gameVersion, loader, selectedVersionId);
   const filesToInstall = plan.map(({ version, title, projectId: dependencyProjectId }) => {
     const jarFiles = version.files?.filter((item) => item.filename?.toLowerCase().endsWith('.jar')) ?? [];
     const file = jarFiles.find((item) => item.primary) || jarFiles[0];
@@ -981,23 +1204,25 @@ async function installMod(projectId, confirmedDependencyIds = null) {
   };
 }
 
-async function installModrinthPack(type, projectId) {
+async function installModrinthPack(type, projectId, gameVersion, selectedVersionId) {
   if (type !== 'resourcepack' && type !== 'shader') {
     throw new Error('Kaynak paketi veya shader paketi türü seçilmelidir.');
   }
   if (typeof projectId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(projectId)) {
     throw new Error('Geçersiz Modrinth proje kimliği.');
   }
-  const versions = await getProjectVersions(projectId, type);
-  const version = selectCompatibleVersion(versions, GAME_VERSION);
+  const versions = await getProjectVersions(projectId, type, gameVersion);
+  const version = selectedVersionId
+    ? versions.find((candidate) => candidate.id === selectedVersionId)
+    : selectCompatibleVersion(versions, gameVersion);
   if (!version) {
     const label = type === 'resourcepack' ? 'kaynak paketi' : 'shader paketi';
-    throw new Error(`Minecraft ${GAME_VERSION} ile uyumlu ${label} sürümü bulunamadı.`);
+    throw new Error(`Minecraft ${gameVersion} ile uyumlu ${label} sürümü bulunamadı.`);
   }
   const file = version.files?.find((item) => item.primary && item.filename?.toLowerCase().endsWith('.zip'))
     || version.files?.find((item) => item.filename?.toLowerCase().endsWith('.zip'));
   if (!file) throw new Error('Bu Modrinth sürümünde indirilebilir ZIP dosyası bulunamadı.');
-  const directory = getContentDirectory((await getState()).minecraftDir, type);
+  const directory = getContentDirectory((await getState()).gameDirectory, type);
   const installIndex = await readInstallIndex(directory, '.zip');
   const result = await downloadModrinthFile(file, directory, '.zip');
   await persistInstalledFiles(directory, '.zip', installIndex, [{ projectId, fileName: result.fileName }]);
@@ -1074,21 +1299,94 @@ ipcMain.handle('app:choose-minecraft-dir', async () => {
   await saveSettings({ ...settings, minecraftDir: result.filePaths[0] });
   return getState();
 });
+ipcMain.handle('app:game-versions', getMinecraftVersions);
+ipcMain.handle('app:save-game-options', async (_event, gameVersion, loader, confirmNewProfile = false, dismissNotice = false) => {
+  if (!SUPPORTED_LOADERS.has(loader)) throw new Error('Mod yükleyicisi geçersiz.');
+  await assertKnownMinecraftVersion(gameVersion);
+  if (loader === 'fabric' && /^\d+\.\d+/.test(gameVersion)) {
+    const [major, minor] = gameVersion.split('.').map(Number);
+    if (major === 1 && minor < 14) {
+      throw new Error('Fabric bu Minecraft sürümünü desteklemiyor; Vanilla veya Forge seçin.');
+    }
+  }
+  const settings = await readSettings();
+  const profileDirectory = getInstanceDir(settings.minecraftDir, gameVersion, loader);
+  let profileExists = true;
+  try {
+    await fs.access(profileDirectory);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    profileExists = false;
+  }
+  if (!profileExists && !settings.profileNoticeDismissed && !confirmNewProfile) {
+    return { requiresConfirmation: true, profileDirectory };
+  }
+  const nextSettings = {
+    ...settings,
+    gameVersion,
+    loader,
+    profileNoticeDismissed: settings.profileNoticeDismissed || dismissNotice,
+  };
+  await saveSettings(nextSettings);
+  await fs.mkdir(profileDirectory, { recursive: true });
+  return { requiresConfirmation: false, state: await getState() };
+});
+ipcMain.handle('app:save-language', async (_event, language) => {
+  if (!['tr', 'en', 'de', 'fr', 'es', 'ru', 'it'].includes(language)) throw new Error('Arayüz dili desteklenmiyor.');
+  const settings = await readSettings();
+  await saveSettings({ ...settings, language, languageSetupComplete: true });
+  return getState();
+});
+ipcMain.handle('app:install-game-profile', installGameProfile);
 ipcMain.handle('app:install-fabric', installFabric);
 ipcMain.handle('app:launch-game', (_event, options) => launchGame(options));
 ipcMain.handle('app:install-menu', async () => {
   const state = await getState();
-  if (!state.fabricInstalled) throw new Error('Önce Minecraft 26.3 için Fabric profilini kurun.');
-  await installBundledMenu(state.minecraftDir);
+  if (!state.westronModSupported || !state.fabricInstalled) {
+    throw new Error('Westron oyun içi menüsü yalnızca Minecraft 26.3 Fabric profilinde kullanılabilir.');
+  }
+  await installBundledMenu(state.gameDirectory);
   return 'Westron Client kuruldu.';
 });
-ipcMain.handle('app:search-mods', (_event, query) => searchModrinth('mod', String(query || '').slice(0, 100)));
-ipcMain.handle('app:search-content', (_event, type, query) =>
-  searchModrinth(String(type), String(query || '').slice(0, 100)));
-ipcMain.handle('app:install-mod', (_event, projectId, confirmedDependencyIds) =>
-  installMod(String(projectId), confirmedDependencyIds));
-ipcMain.handle('app:install-content', (_event, type, projectId) =>
-  installModrinthPack(String(type), String(projectId)));
+ipcMain.handle('app:search-mods', async (_event, query) => {
+  const state = await getState();
+  return searchModrinth('mod', String(query || '').slice(0, 100), state.gameVersion, state.loader);
+});
+ipcMain.handle('app:search-content', async (_event, type, query) => {
+  const state = await getState();
+  return searchModrinth(String(type), String(query || '').slice(0, 100), state.gameVersion, state.loader);
+});
+ipcMain.handle('app:project-versions', async (_event, type, projectId) => {
+  const state = await getState();
+  const versions = await getProjectVersions(String(projectId), String(type), state.gameVersion, state.loader);
+  return versions.map((version) => ({
+    id: version.id,
+    versionNumber: version.version_number,
+    name: version.name,
+    datePublished: version.date_published,
+    gameVersions: version.game_versions,
+    loaders: version.loaders,
+  }));
+});
+ipcMain.handle('app:install-mod', async (_event, projectId, selectedVersionId, confirmedDependencyIds) => {
+  const state = await getState();
+  return installMod(
+    String(projectId),
+    state.gameVersion,
+    state.loader,
+    typeof selectedVersionId === 'string' ? selectedVersionId : null,
+    confirmedDependencyIds,
+  );
+});
+ipcMain.handle('app:install-content', async (_event, type, projectId, selectedVersionId) => {
+  const state = await getState();
+  return installModrinthPack(
+    String(type),
+    String(projectId),
+    state.gameVersion,
+    typeof selectedVersionId === 'string' ? selectedVersionId : null,
+  );
+});
 ipcMain.handle('app:update-status', () => updateStatus);
 ipcMain.handle('app:check-for-updates', checkForUpdates);
 ipcMain.handle('app:publish-update', publishUpdateFiles);
@@ -1110,6 +1408,9 @@ registerWestronIpcHandlers(ipcMain, {
   resetPassword: westronResetPassword,
   profile: westronGetProfile,
   uploadSkin: westronUploadSkin,
+  deleteSkin: westronDeleteSkin,
+  uploadCape: westronUploadCape,
+  deleteCape: westronDeleteCape,
   logout: westronLogout,
 });
 ipcMain.handle('app:remove-mod', async (_event, fileName) => {
@@ -1117,7 +1418,7 @@ ipcMain.handle('app:remove-mod', async (_event, fileName) => {
     throw new Error('Geçersiz mod dosyası.');
   }
   const state = await getState();
-  await removeInstalledFile(getModsDir(state.minecraftDir), '.jar', fileName);
+  await removeInstalledFile(getModsDir(state.gameDirectory), '.jar', fileName);
   return getState();
 });
 ipcMain.handle('app:remove-content', async (_event, type, fileName) => {
@@ -1128,12 +1429,12 @@ ipcMain.handle('app:remove-content', async (_event, type, fileName) => {
     throw new Error('Geçersiz kaynak paketi veya shader dosyası.');
   }
   const state = await getState();
-  await removeInstalledFile(getContentDirectory(state.minecraftDir, type), '.zip', fileName);
+  await removeInstalledFile(getContentDirectory(state.gameDirectory, type), '.zip', fileName);
   return getState();
 });
 ipcMain.handle('app:open-mods-folder', async () => {
   const state = await getState();
-  const modsDir = getModsDir(state.minecraftDir);
+  const modsDir = getModsDir(state.gameDirectory);
   await fs.mkdir(modsDir, { recursive: true });
   const error = await shell.openPath(modsDir);
   if (error) throw new Error(error);
@@ -1141,7 +1442,7 @@ ipcMain.handle('app:open-mods-folder', async () => {
 ipcMain.handle('app:open-content-folder', async (_event, type) => {
   if (type !== 'resourcepack' && type !== 'shader') throw new Error('Geçersiz Modrinth içerik türü.');
   const state = await getState();
-  const directory = getContentDirectory(state.minecraftDir, type);
+  const directory = getContentDirectory(state.gameDirectory, type);
   await fs.mkdir(directory, { recursive: true });
   const error = await shell.openPath(directory);
   if (error) throw new Error(error);

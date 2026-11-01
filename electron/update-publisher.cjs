@@ -24,8 +24,8 @@ async function readIfPresent(filePath) {
 }
 
 async function readUpdateFiles(directory) {
-  const installerName = 'Westron Client Setup 1.0.exe';
-  const blockmapName = 'Westron Client Setup 1.0.exe.blockmap';
+  const installerName = 'Westron Client Setup 1.0.1.exe';
+  const blockmapName = 'Westron Client Setup 1.0.1.exe.blockmap';
   const [installerContents, blockmapContents, manifestContents] = await Promise.all([
     readIfPresent(path.join(directory, installerName)),
     readIfPresent(path.join(directory, blockmapName)),

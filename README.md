@@ -1,6 +1,6 @@
 # Westron Client
 
-Windows Ve MacOs İçin, Fabric ve Minecraft 26.3 odaklı masaüstü launcher.
+Windows ve macOS için koyu temalı Minecraft launcher. 1.8–26.3 arası oyun sürümlerini, en yeni snapshot'ı ve Vanilla, Fabric veya Forge profillerini destekler.
 
 ## Geliştirme
 
@@ -11,12 +11,16 @@ Fabric kurulumundan sonra oyunu Microsoft hesabınla veya ayrı bir çevrimdış
 
 ## Özellikler
 
-- Fabric Loader'ı Fabric Meta API'sinden indirip Minecraft 26.3 oyun dizinine kurar; önceden indirilmiş bir oyun sürümü şartı yoktur.
+- Her Minecraft sürümü ve loader için ayrı oyun profili/klasörü oluşturur; ilk kullanımda klasör konumunu bildirir.
+- Fabric, Forge veya Vanilla profillerini seçili Minecraft sürümüne göre kurar; önceden indirilmiş oyun dosyası şartı yoktur.
+- İndirme kaynakları geçici olarak erişilemediğinde ASM analiz kütüphanesi için doğrulanmış Maven Central yedeğini kullanır; dosyayı SHA-1 ve boyutla doğrular.
 - Oyun içi duraklatma ekranını değiştiren Westron Client Fabric modunu ve Fabric API'yi birlikte kurar.
 - Microsoft → Xbox Live → XSTS → Minecraft kimlik doğrulamasını ve Java profili/oyun sahipliği kontrolünü uygular; yenileme bilgilerini Windows güvenli depolamasında tutar.
-- Microsoft hesabından bağımsız Westron hesabıyla skin yüklemeyi destekler.
-- Fabric ve Minecraft 26.3 uyumlu modları Modrinth'te arar; zorunlu bağımlılıkları indirmeden önce listeler ve onaydan sonra birlikte kurar.
-- Mod menüsünden ayrı olarak Modrinth kaynak paketi ve shader paketlerini en yeni Minecraft 26.3 uyumlu sürümleriyle kurar, hash doğrular ve eski Westron-yönetimli sürümü günceller. Shader çalıştırmak için Iris 26.3 Fabric altyapısını kurma   olanağı sağlar.
+- Microsoft hesabından bağımsız Westron hesabıyla skin ve pelerin yüklemeyi destekler. Görünümler, Westron Fabric istemci modunu kullanan diğer oyunculara da aktarılır; modsuz istemciler özel görünümleri alamaz.
+- Skin & Pelerin ekranında skin ve pelerini dokulu hareketli 3D karakter üzerinde önizler; animasyon, dönüş ve hız ayarları sunar.
+- Seçili Minecraft sürümü ve Fabric/Forge loader ile uyumlu modları Modrinth'te arar; yüklemeden önce uyumlu yayın sürümünü seçtirir ve zorunlu bağımlılıkları onayla birlikte kurar.
+- Kaynak paketlerini ve shader paketlerini seçili Minecraft sürümüne uygun yayınlarla kurar; SHA-1 doğrulaması yapar.
+- İlk açılışta, Ayarlar'da ve Windows kurulum sihirbazında Türkçe, İngilizce, Almanca, Fransızca, İspanyolca, Rusça ve İtalyanca dil seçenekleri sunar. Diğer launcher ekranlarının tamamı henüz bu dillere çevrilmemiştir.
 - Yüklü JAR modlarını listeler, kaldırır ve oyun klasörünü açar.
 - Sunucu adresini doğrulayıp panoya kopyalar; oyun içinde çok oyunculu menüsünden bağlanılır.
 
@@ -24,12 +28,13 @@ Fabric kurulumu tamamlanınca Westron Client modu da `mods` klasörüne eklenir.
 
 ## Westron Skin API
 
-Westron Skin API Westron Client in Kendi Varsayılan Skin Dosyasıdır.Başka Launcherlar Veya Premium Minecraft İçin Uyumludur.
+Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi backend'i [`skin-api/`](./skin-api/) dizinindedir. Kurulum, Docker/Nginx Proxy Manager ayarları, API endpoint'leri ve test komutları için [skin-api/README.md](./skin-api/README.md) dosyasına bakın. Fabric istemci modülü Westron skin ve pelerinlerini ve mevcut herkese açık Minecraft görünümlerini istemci tarafında yükler; PNG'leri HTTPS üzerinden alıp yerel önbelleğe alır. Başka launcher kullanan oyuncular `npm run build:mod` komutuyla oluşturulan `fabric-mod/build/libs/westron-client-skin-1.0.1.jar` dosyasını uyumlu Fabric profilinin `mods` klasörüne ekleyebilir. Modsuz istemciler özel görünümleri göremez; Westron profilinin otomatik bulunması için oyun adı Westron kullanıcı adıyla aynı olmalıdır.
 
 ## Sürüm numaraları
 
-Sürüm Şuan Da Yeni Yayımlanan 1.0.0 dır. Yeni Sürümler Yakında Geliyor...
+Uygulama, paket, Windows kurulum dosyası ve Fabric skin modunun sürümü `1.0.1`'dir. Kurulum dosyası `release/Westron Client Setup 1.0.1.exe` adını alır.
 
+Güncelleme yayımlama alanında, `npm run package` komutuyla oluşturulan `release/` klasörünü seçin. Kurulum dosyası `Westron Client Setup 1.0.1.exe`, `.blockmap` ve `latest.yml` aynı klasörde bulunmalıdır; uygulama klasördeki üç dosyayı birlikte okuyup yayımlar. Büyük kurulum dosyaları için yükleme zaman aşımı dosya boyutuna göre en fazla 90 dakikaya çıkarılır. Kurulum sihirbazı Windows'un yerleşik kurulum adımlarını, Westron başlık ve kenar görselleriyle kullanır.
 
 ## Modrinth paketleri
 

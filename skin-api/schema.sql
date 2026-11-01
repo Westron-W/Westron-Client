@@ -69,4 +69,11 @@ CREATE TABLE IF NOT EXISTS skins (
   updated_at TEXT NOT NULL
 );
 
-PRAGMA user_version = 2;
+CREATE TABLE IF NOT EXISTS capes (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  storage_key TEXT NOT NULL UNIQUE,
+  sha256 TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+PRAGMA user_version = 3;

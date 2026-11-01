@@ -8,7 +8,7 @@ const fs = require('node:fs');
 test('package and lockfile versions are aligned for release metadata', () => {
   assert.equal(packageJson.version, lockfile.version);
   assert.equal(packageJson.version, lockfile.packages[''].version);
-  assert.match(fs.readFileSync('electron/main.cjs', 'utf8'), /const DISPLAY_VERSION = '1\.0';/);
+  assert.match(fs.readFileSync('electron/main.cjs', 'utf8'), /const DISPLAY_VERSION = '1\.0\.1';/);
 });
 
 test('Windows installer publishes update metadata to the HTTPS update path', () => {
@@ -23,7 +23,7 @@ test('Windows installer publishes update metadata to the HTTPS update path', () 
   assert.equal(packageJson.build.win.icon, 'build/westron-client.ico');
   assert.equal(packageJson.build.nsis.installerIcon, 'build/westron-client.ico');
   assert.equal(packageJson.build.nsis.uninstallerIcon, 'build/westron-client.ico');
-  assert.equal(packageJson.build.artifactName, 'Westron Client Setup 1.0.exe');
+  assert.equal(packageJson.build.artifactName, 'Westron Client Setup 1.0.1.exe');
   assert.equal(packageJson.build.nsis.installerSidebar, 'build/installer-sidebar.bmp');
   assert.equal(packageJson.build.nsis.uninstallerSidebar, 'build/installer-sidebar.bmp');
   assert.equal(packageJson.build.nsis.installerHeader, 'build/installer-header.bmp');
@@ -51,17 +51,17 @@ test('macOS packages have isolated output and include the shared Fabric client m
   assert.deepEqual(packageJson.build.extraResources[1], macBuild.extraResources[0]);
   assert.ok(packageJson.build.files.includes('dist/**/*'));
   assert.ok(packageJson.build.files.includes('electron/**/*'));
-  assert.equal(macBuild.extraResources[0].to, 'westron-client-skin-1.0.jar');
+  assert.equal(macBuild.extraResources[0].to, 'westron-client-skin-1.0.1.jar');
   assert.equal(packageJson.scripts['package:macos'].includes('macos-client/electron-builder.json'), true);
-  assert.equal(packageJson.version, '1.0.7');
+  assert.equal(packageJson.version, '1.0.1');
   const gradleProperties = fs.readFileSync('fabric-mod/gradle.properties', 'utf8');
-  assert.match(gradleProperties, /^mod_version=1\.0$/m);
-  assert.equal(packageJson.build.extraResources[1].to, 'westron-client-skin-1.0.jar');
+  assert.match(gradleProperties, /^mod_version=1\.0\.1$/m);
+  assert.equal(packageJson.build.extraResources[1].to, 'westron-client-skin-1.0.1.jar');
 });
 
 test('macOS build maintains parity with Windows features and resources', () => {
   assert.equal(macBuild.mac.darkModeSupport, true);
-  assert.equal(fs.existsSync('fabric-mod/build/libs/westron-client-skin-1.0.jar'), true);
+  assert.equal(fs.existsSync('fabric-mod/build/libs/westron-client-skin-1.0.1.jar'), true);
   assert.ok(packageJson.scripts['package:macos'].includes('npm run build:mod:macos'));
   assert.ok(packageJson.scripts['package:macos'].includes('npm run build'));
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');

@@ -13,6 +13,7 @@ import { migrateDatabase } from './database.js';
 import { ApiError, sendError } from './errors.js';
 import {
   createOpaqueToken,
+  createVerificationCode,
   createId,
   hashPassword,
   hashToken,
@@ -24,7 +25,7 @@ import {
   validateUsername,
   verifyPassword,
 } from './security.js';
-import { MAX_SKIN_BYTES, persistSkin, removeSkinFile, validateSkinPng } from './skins.js';
+import { MAX_SKIN_BYTES, persistSkin, persistCape, removeSkinFile, validateSkinPng, validateCapePng } from './skins.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_UPDATE_BYTES = 256 * 1024 * 1024;
@@ -67,7 +68,7 @@ function parseTrustProxy(value) {
   return value;
 }
 
-function profileResponse(user, skin, publicBaseUrl) {
+function profileResponse(user, skin, publicBaseUrl, cape) {
   return {
     username: user.username,
     skin: skin ? {
@@ -75,11 +76,15 @@ function profileResponse(user, skin, publicBaseUrl) {
       url: `${publicBaseUrl}/api/v1/profiles/${encodeURIComponent(user.username)}/skin.png`,
       updatedAt: skin.updated_at,
     } : null,
+    cape: cape ? {
+      url: `${publicBaseUrl}/api/v1/profiles/${encodeURIComponent(user.username)}/cape.png`,
+      updatedAt: cape.updated_at,
+    } : null,
   };
 }
 
 function validateVerificationToken(token) {
-  return typeof token === 'string' && /^[A-Za-z0-9_-]{40,50}$/.test(token);
+  return typeof token === 'string' && /^(?:\d{6}|[A-Za-z0-9_-]{40,50})$/.test(token);
 }
 
 function validateCredentials(body) {
@@ -102,7 +107,7 @@ function parseUpdateManifest(buffer) {
   const fileName = manifest.match(/^  - url:\s*(Westron Client Setup (?:\d+\.\d+\.\d+|1\.0)\.exe)\s*$/m)?.[1];
   const sha512 = manifest.match(/^    sha512:\s*([A-Za-z0-9+/=]+)\s*$/m)?.[1];
   const versionedFileName = version && fileName === `Westron Client Setup ${version}.exe`;
-  const stableProductFileName = version?.startsWith('1.0.') && fileName === 'Westron Client Setup 1.0.exe';
+  const stableProductFileName = version === '1.0.1' && fileName === 'Westron Client Setup 1.0.1.exe';
   if (!version || !fileName || !sha512 || (!versionedFileName && !stableProductFileName)) {
     throw new ApiError(400, 'invalid_update_manifest', 'Güncelleme metadata dosyası geçersiz.');
   }
@@ -201,6 +206,11 @@ export async function buildApp({
     }
     if (error.statusCode === 429 || error.error?.code === 'rate_limit_exceeded') {
       return sendError(reply, 429, 'rate_limit_exceeded', 'Çok fazla istek gönderildi.');
+    }
+    if (error.statusCode === 415
+      || error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE'
+      || (error.statusCode === 406 && error.code === 'FST_INVALID_MULTIPART_CONTENT_TYPE')) {
+      return sendError(reply, 415, 'unsupported_media_type', 'Dosya yüklemesi multipart/form-data biçiminde olmalıdır.');
     }
     if (error.validation || error.statusCode === 400) {
       return sendError(reply, 400, 'invalid_request', 'İstek biçimi veya alan değerleri geçersiz.');
@@ -334,7 +344,7 @@ export async function buildApp({
     required: ['email', 'token'],
     properties: {
       email: { type: 'string', minLength: 3, maxLength: 254, format: 'email' },
-      token: { type: 'string', minLength: 40, maxLength: 50 },
+      token: { type: 'string', minLength: 6, maxLength: 50 },
     },
   };
   const requestEmailBody = {
@@ -373,6 +383,20 @@ export async function buildApp({
     required: ['username', 'skin'],
     properties: {
       username: { type: 'string' },
+      cape: {
+        anyOf: [
+          { type: 'null' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['url', 'updatedAt'],
+            properties: {
+              url: { type: 'string', format: 'uri' },
+              updatedAt: { type: 'string', format: 'date-time' },
+            },
+          },
+        ],
+      },
       skin: {
         anyOf: [
           { type: 'null' },
@@ -425,7 +449,7 @@ export async function buildApp({
   }
 
   function issueOneTimeToken(tableName, userId) {
-    const { token, tokenHash } = createOpaqueToken();
+    const { token, tokenHash } = tableName === 'email_verification_tokens' ? createVerificationCode() : createOpaqueToken();
     const expiresAt = Date.now() + oneTimeTokenTtlMinutes * 60 * 1000;
     const now = new Date().toISOString();
     database.transaction(() => {
@@ -842,7 +866,9 @@ export async function buildApp({
   }, async (request) => {
     const skin = database.prepare('SELECT model, updated_at FROM skins WHERE user_id = ?')
       .get(request.skinUser.id);
-    return profileResponse(request.skinUser, skin, publicBaseUrl);
+    const cape = database.prepare('SELECT updated_at FROM capes WHERE user_id = ?')
+      .get(request.skinUser.id);
+    return profileResponse(request.skinUser, skin, publicBaseUrl, cape);
   });
 
   app.post('/api/v1/me/skin', {
@@ -911,7 +937,8 @@ export async function buildApp({
       logger: request.log,
       replace,
     });
-    const response = profileResponse(request.skinUser, skin, publicBaseUrl);
+    const cape = database.prepare('SELECT updated_at FROM capes WHERE user_id = ?').get(request.skinUser.id);
+    const response = profileResponse(request.skinUser, skin, publicBaseUrl, cape);
     return reply.code(replace ? 200 : 201).send(response);
   }
 
@@ -955,7 +982,8 @@ export async function buildApp({
       .get(normalizeUsername(request.params.username));
     if (!user) throw new ApiError(404, 'profile_not_found', 'Oyuncu profili bulunamadı.');
     const skin = database.prepare('SELECT model, updated_at FROM skins WHERE user_id = ?').get(user.id);
-    return profileResponse(user, skin, publicBaseUrl);
+    const cape = database.prepare('SELECT updated_at FROM capes WHERE user_id = ?').get(user.id);
+    return profileResponse(user, skin, publicBaseUrl, cape);
   });
 
   app.get('/api/v1/profiles/:username/skin.png', {
@@ -979,12 +1007,155 @@ export async function buildApp({
       WHERE users.username_normalized = ?
     `).get(normalizeUsername(request.params.username));
     if (!skin) throw new ApiError(404, 'skin_not_found', 'Oyuncunun yüklenmiş bir skini yok.');
+    reply.header('Access-Control-Allow-Origin', '*');
     const etag = `"${skin.sha256}"`;
     reply.header('Cache-Control', 'public, max-age=60, must-revalidate');
     reply.header('ETag', etag);
     if (request.headers['if-none-match'] === etag) return reply.code(304).send();
     const image = await readFile(path.join(skinsDir, skin.storage_key));
     return reply.type('image/png').send(image);
+  });
+
+
+  app.post('/api/v1/me/cape', {
+    ...skinUploadRouteConfig,
+    schema: {
+      operationId: 'uploadCape',
+      tags: ['capes'],
+      response: {
+        201: { $ref: 'profile#' },
+        400: errorResponse,
+        401: errorResponse,
+        403: errorResponse,
+        409: errorResponse,
+        413: errorResponse,
+        415: errorResponse,
+        422: errorResponse,
+        429: errorResponse,
+        500: errorResponse,
+      },
+    },
+  }, async (request, reply) => saveCape(request, reply, { replace: false }));
+
+  app.put('/api/v1/me/cape', {
+    ...skinUploadRouteConfig,
+    schema: {
+      operationId: 'changeCape',
+      tags: ['capes'],
+      response: {
+        200: { $ref: 'profile#' },
+        400: errorResponse,
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        413: errorResponse,
+        415: errorResponse,
+        422: errorResponse,
+        429: errorResponse,
+        500: errorResponse,
+      },
+    },
+  }, async (request, reply) => saveCape(request, reply, { replace: true }));
+
+  async function saveCape(request, reply, { replace }) {
+    const existing = database.prepare('SELECT storage_key FROM capes WHERE user_id = ?').get(request.skinUser.id);
+    if (replace && !existing) throw new ApiError(404, 'cape_not_found', 'Değiştirilecek bir pelerin bulunamadı.');
+    if (!replace && existing) throw new ApiError(409, 'cape_exists', 'Pelerin zaten mevcut; değiştirmek için PUT kullanın.');
+
+    const part = await request.file();
+    if (!part) throw new ApiError(400, 'cape_required', 'cape alanında bir PNG dosyası gönderin.');
+    if (part.fieldname !== 'cape' || part.mimetype !== 'image/png') {
+      part.file.resume();
+      throw new ApiError(415, 'invalid_cape_format', 'Dosya image/png türünde ve cape alanında olmalıdır.');
+    }
+    const buffer = await part.toBuffer();
+    if (part.file.truncated) throw new ApiError(413, 'invalid_cape_size', 'Pelerin PNG dosyası 1 MiB sınırını aşıyor.');
+    const image = await validateCapePng(buffer);
+    const cape = await persistCape({
+      userId: request.skinUser.id,
+      image,
+      skinsDir,
+      database,
+      logger: request.log,
+      replace,
+    });
+    const skin = database.prepare('SELECT model, updated_at FROM skins WHERE user_id = ?').get(request.skinUser.id);
+    const response = profileResponse(request.skinUser, skin, publicBaseUrl, cape);
+    return reply.code(replace ? 200 : 201).send(response);
+  }
+
+  app.delete('/api/v1/me/cape', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'deleteMyCape',
+      tags: ['capes'],
+      response: {
+        204: { type: 'null' },
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        429: errorResponse,
+        500: errorResponse,
+      },
+    },
+  }, async (request, reply) => {
+    const cape = database.prepare('SELECT storage_key FROM capes WHERE user_id = ?').get(request.skinUser.id);
+    if (!cape) throw new ApiError(404, 'cape_not_found', 'Kaldırılacak bir pelerin bulunamadı.');
+    database.prepare('DELETE FROM capes WHERE user_id = ?').run(request.skinUser.id);
+    await removeSkinFile(skinsDir, cape.storage_key, request.log);
+    return reply.code(204).send();
+  });
+
+  app.get('/api/v1/profiles/:username/cape.png', {
+    schema: {
+      operationId: 'getPlayerCape',
+      tags: ['capes'],
+      params: usernameParams,
+      response: {
+        200: { type: 'string', format: 'binary', 'content-type': 'image/png' },
+        304: { type: 'null' },
+        400: errorResponse,
+        404: errorResponse,
+        429: errorResponse,
+        500: errorResponse,
+      },
+    },
+  }, async (request, reply) => {
+    const cape = database.prepare(`
+      SELECT capes.storage_key, capes.sha256 FROM capes
+      JOIN users ON users.id = capes.user_id
+      WHERE users.username_normalized = ?
+    `).get(normalizeUsername(request.params.username));
+    if (!cape) throw new ApiError(404, 'cape_not_found', 'Oyuncunun yüklenmiş bir pelerini yok.');
+    reply.header('Access-Control-Allow-Origin', '*');
+    const etag = `"${cape.sha256}"`;
+    reply.header('Cache-Control', 'public, max-age=60, must-revalidate');
+    reply.header('ETag', etag);
+    if (request.headers['if-none-match'] === etag) return reply.code(304).send();
+    const image = await readFile(path.join(skinsDir, cape.storage_key));
+    return reply.type('image/png').send(image);
+  });
+
+  app.get('/skin/profile/texture/login/:username', async (request, reply) => {
+    const user = database.prepare('SELECT id, username FROM users WHERE username_normalized = ?')
+      .get(normalizeUsername(request.params.username));
+    if (!user) return reply.code(204).send();
+    const skin = database.prepare('SELECT model, updated_at FROM skins WHERE user_id = ?').get(user.id);
+    const cape = database.prepare('SELECT updated_at FROM capes WHERE user_id = ?').get(user.id);
+    if (!skin && !cape) return reply.code(204).send();
+    const result = {};
+    if (skin) {
+      result.SKIN = {
+        url: `${publicBaseUrl}/api/v1/profiles/${encodeURIComponent(user.username)}/skin.png`,
+        metadata: { model: skin.model },
+      };
+    }
+    if (cape) {
+      result.CAPE = {
+        url: `${publicBaseUrl}/api/v1/profiles/${encodeURIComponent(user.username)}/cape.png`,
+      };
+    }
+    return reply.send(result);
   });
 
   app.get('/api/openapi.yaml', {

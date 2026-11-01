@@ -10,12 +10,20 @@ const WESTRON_IPC_CHANNELS = Object.freeze({
   resetPassword: 'app:westron-reset-password',
   profile: 'app:westron-profile',
   uploadSkin: 'app:westron-upload-skin',
+  deleteSkin: 'app:westron-delete-skin',
+  uploadCape: 'app:westron-upload-cape',
+  deleteCape: 'app:westron-delete-cape',
   logout: 'app:westron-logout',
 });
 
 contextBridge.exposeInMainWorld('nocturne', {
   getState: () => ipcRenderer.invoke('app:state'),
   chooseMinecraftDir: () => ipcRenderer.invoke('app:choose-minecraft-dir'),
+  getGameVersions: () => ipcRenderer.invoke('app:game-versions'),
+  saveGameOptions: (gameVersion, loader, confirmNewProfile, dismissNotice) =>
+    ipcRenderer.invoke('app:save-game-options', gameVersion, loader, confirmNewProfile, dismissNotice),
+  saveLanguage: (language) => ipcRenderer.invoke('app:save-language', language),
+  installGameProfile: () => ipcRenderer.invoke('app:install-game-profile'),
   installFabric: () => ipcRenderer.invoke('app:install-fabric'),
   launchGame: (options) => ipcRenderer.invoke('app:launch-game', options),
   getMicrosoftAccount: () => ipcRenderer.invoke('app:microsoft-account'),
@@ -27,10 +35,13 @@ contextBridge.exposeInMainWorld('nocturne', {
   loginWestronAccount: (input) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.login, input),
   verifyWestronEmail: (input) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.verifyEmail, input),
   resendWestronVerification: (input) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.resendVerification, input),
-  requestWestronPasswordReset: (input) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.requestPasswordReset, input),
-  resetWestronPassword: (input) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.resetPassword, input),
+  requestPasswordReset: (input) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.requestPasswordReset, input),
+  resetPassword: (input) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.resetPassword, input),
   getWestronProfile: () => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.profile),
   uploadWestronSkin: (model) => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.uploadSkin, model),
+  deleteWestronSkin: () => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.deleteSkin),
+  uploadWestronCape: () => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.uploadCape),
+  deleteWestronCape: () => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.deleteCape),
   logoutWestronAccount: () => ipcRenderer.invoke(WESTRON_IPC_CHANNELS.logout),
   onGameExit: (callback) => {
     const listener = (_event, result) => callback(result);
@@ -45,9 +56,13 @@ contextBridge.exposeInMainWorld('nocturne', {
   installMenu: () => ipcRenderer.invoke('app:install-menu'),
   searchMods: (query) => ipcRenderer.invoke('app:search-mods', query),
   searchContent: (type, query) => ipcRenderer.invoke('app:search-content', type, query),
+  getProjectVersions: (type, projectId) => ipcRenderer.invoke('app:project-versions', type, projectId),
   installMod: (projectId, confirmedDependencyIds) =>
-    ipcRenderer.invoke('app:install-mod', projectId, confirmedDependencyIds),
-  installContent: (type, projectId) => ipcRenderer.invoke('app:install-content', type, projectId),
+    ipcRenderer.invoke('app:install-mod', projectId, null, confirmedDependencyIds),
+  installModVersion: (projectId, selectedVersionId, confirmedDependencyIds) =>
+    ipcRenderer.invoke('app:install-mod', projectId, selectedVersionId, confirmedDependencyIds),
+  installContent: (type, projectId, selectedVersionId) =>
+    ipcRenderer.invoke('app:install-content', type, projectId, selectedVersionId),
   removeMod: (fileName) => ipcRenderer.invoke('app:remove-mod', fileName),
   removeContent: (type, fileName) => ipcRenderer.invoke('app:remove-content', type, fileName),
   getUpdateStatus: () => ipcRenderer.invoke('app:update-status'),

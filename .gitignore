@@ -4,7 +4,7 @@ release/
 macos-client/release/
 fabric-mod/.gradle/
 fabric-mod/build/
-!fabric-mod/build/libs/westron-client-skin-1.0.jar
+!fabric-mod/build/libs/westron-client-skin-1.0.1.jar
 .env
 .env.*
 *.bin
