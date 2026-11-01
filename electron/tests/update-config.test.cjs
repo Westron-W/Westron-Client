@@ -28,6 +28,7 @@ test('Windows installer checks GitHub Releases and publishes updater metadata', 
   assert.match(releaseWorkflow, /cp release\/latest\.yml/);
   assert.match(releaseWorkflow, /softprops\/action-gh-release/);
   assert.match(releaseWorkflow, /release_tag:/);
+  assert.match(releaseWorkflow, /startsWith\(github\.event\.head_commit\.message, '\[publish-release\]'\)/);
   assert.match(releaseWorkflow, /Verify published updater assets/);
   assert.match(releaseWorkflow, /gh release view "\$RELEASE_TAG"/);
   assert.doesNotMatch(releaseWorkflow, /gh release delete/);
