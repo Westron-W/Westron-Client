@@ -1,4 +1,4 @@
-# Westron Client
+<img width="1755" height="1077" alt="image" src="https://github.com/user-attachments/assets/d99b7eeb-925a-4f4d-b2a0-2b0becb83d56" /># Westron Client
 
 Windows ve macOS için koyu temalı Minecraft launcher. 1.8–26.3 arası oyun sürümlerini, en yeni snapshot'ı ve Vanilla, Fabric veya Forge profillerini destekler.
 
@@ -43,3 +43,7 @@ Sol menüden **Kaynak paketleri** , **Shader paketleri** ve **Mod Paketleri** sa
 ## macOS derlemesi
 
 MacOs Sorunsuz Şekilde Çalışır Uygun .dmg Dosyasını İndirip Kullanmaya Başlayabilirsiniz
+
+
+<img width="1755" height="1077" alt="image" src="https://github.com/user-attachments/assets/732f0d3a-cbaf-4411-9129-7d6b01fdf318" />
+
