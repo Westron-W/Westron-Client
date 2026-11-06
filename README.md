@@ -22,7 +22,7 @@ Fabric kurulumu tamamlanınca Westron Client modu da `mods` klasörüne eklenir.
 
 ## Westron Skin API
 
-Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi kendi "Westron Skin API"'sidir.Ve Westron Client'e Özel Bir Pakettir.
+Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi kendi "Westron Skin API"'sidir ve Westron Client'e özel bir pakettir.
 
 ## Sürüm numaraları
 
