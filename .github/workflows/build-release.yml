@@ -162,23 +162,22 @@ jobs:
           overwrite_files: true
           make_latest: true
           files: |
-            release/windows/*
-            release/macos/*
+            release/windows/Windows-Westron-Client-Setup-*.exe
+            release/macos/MacOS-Westron-Client-*.dmg
 
-      - name: Verify published updater assets
+      - name: Verify published installer assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           RELEASE_TAG="${{ env.RELEASE_TAG }}"
           VERSION="${RELEASE_TAG#v}"
           ASSETS=$(gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
-          for ASSET in \
-            "Westron-Client-Setup-${VERSION}.exe" \
-            "Westron-Client-Setup-${VERSION}.exe.blockmap" \
-            "latest.yml"
-          do
-            if ! printf '%s\n' "$ASSETS" | grep -Fxq "$ASSET"; then
-              echo "::error::Published release is missing required updater asset: $ASSET"
-              exit 1
-            fi
-          done
+          EXPECTED_ASSETS=$(printf '%s\n' \
+            "Windows-Westron-Client-Setup-${VERSION}.exe" \
+            "MacOS-Westron-Client-${VERSION}.dmg" | sort)
+          ACTUAL_ASSETS=$(printf '%s\n' "$ASSETS" | sort)
+          if [ "$ACTUAL_ASSETS" != "$EXPECTED_ASSETS" ]; then
+            echo "::error::GitHub Release must contain only the Windows EXE and macOS DMG"
+            printf 'Expected:\n%s\nActual:\n%s\n' "$EXPECTED_ASSETS" "$ACTUAL_ASSETS"
+            exit 1
+          fi

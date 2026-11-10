@@ -13,6 +13,8 @@ import net.minecraft.core.ClientAsset;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.PlayerModelType;
 import net.minecraft.world.entity.player.PlayerSkin;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,8 +56,8 @@ public final class WestronSkinManager {
     private static final int MAX_PROFILE_BYTES = 64 * 1024;
     private static final int MAX_SKIN_BYTES = 1024 * 1024;
     private static final long REFRESH_DELAY_MILLIS = Duration.ofMinutes(5).toMillis();
-    private static final long RETRY_DELAY_MILLIS = Duration.ofMinutes(1).toMillis();
-    private static final long NOT_FOUND_RETRY_DELAY_MILLIS = Duration.ofMinutes(5).toMillis();
+    private static final long RETRY_DELAY_MILLIS = Duration.ofSeconds(15).toMillis();
+    private static final long NOT_FOUND_RETRY_DELAY_MILLIS = Duration.ofMinutes(1).toMillis();
     private static final ExecutorService IO_EXECUTOR = Executors.newFixedThreadPool(2, task -> {
         Thread thread = new Thread(task, "Westron skin API");
         thread.setDaemon(true);
@@ -386,7 +388,7 @@ public final class WestronSkinManager {
 
     private static JsonObject getJson(URI uri) throws IOException, InterruptedException {
         HttpResponse<InputStream> response = HTTP.send(
-                HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).GET().build(),
+                HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(5)).GET().build(),
                 HttpResponse.BodyHandlers.ofInputStream());
         try (InputStream body = response.body()) {
             if (response.statusCode() == 204 || response.statusCode() == 404) {
@@ -439,7 +441,7 @@ public final class WestronSkinManager {
             String cacheUsername, URI skinUri, URI capeUri, String model, String updatedAt, String provider, SkinEntry entry)
             throws IOException, InterruptedException {
         HttpRequest.Builder request = HttpRequest.newBuilder(skinUri)
-                .timeout(Duration.ofSeconds(10))
+                .timeout(Duration.ofSeconds(5))
                 .GET();
         if (provider.equals(entry.provider) && entry.etag != null && !entry.etag.isBlank()) {
             request.header("If-None-Match", entry.etag);
@@ -449,9 +451,8 @@ public final class WestronSkinManager {
         byte[] png = null;
         String etag = null;
         if (response.statusCode() == 304 && Files.isRegularFile(skinFile(cacheUsername))) {
-            try (InputStream ignored = response.body()) {
-                etag = entry.etag;
-            }
+            response.body().close();
+            etag = entry.etag;
         } else if (response.statusCode() == 200) {
             try (InputStream body = response.body()) {
                 png = readBounded(body, MAX_SKIN_BYTES);
@@ -469,7 +470,7 @@ public final class WestronSkinManager {
         if (capeUri != null) {
             try {
                 HttpRequest.Builder capeRequest = HttpRequest.newBuilder(capeUri)
-                        .timeout(Duration.ofSeconds(10))
+                        .timeout(Duration.ofSeconds(5))
                         .GET();
                 if (provider.equals(entry.provider)
                         && hasValidCachedCape(cacheUsername)
@@ -480,9 +481,8 @@ public final class WestronSkinManager {
                 HttpResponse<InputStream> capeResponse = HTTP.send(
                         capeRequest.build(), HttpResponse.BodyHandlers.ofInputStream());
                 if (capeResponse.statusCode() == 304 && Files.isRegularFile(capeFile(cacheUsername))) {
-                    try (InputStream ignored = capeResponse.body()) {
-                        capeEtag = entry.capeEtag;
-                    }
+                    capeResponse.body().close();
+                    capeEtag = entry.capeEtag;
                 } else if (capeResponse.statusCode() == 200) {
                     try (InputStream body = capeResponse.body()) {
                         byte[] downloadedCape = readBounded(body, MAX_SKIN_BYTES);
@@ -695,19 +695,19 @@ public final class WestronSkinManager {
             LOGGER.warn("Could not read a cached Westron skin texture.");
             return;
         }
-        Identifier textureId = Identifier.fromNamespaceAndPath(
-                "westron", "skins/" + username + "_" + skinHash(skinBytes, model));
-        ClientAsset.ResourceTexture texture = new ClientAsset.ResourceTexture(textureId);
-        PlayerModelType playerModel = model.equals("slim") ? PlayerModelType.SLIM : PlayerModelType.WIDE;
+        @NonNull Identifier textureId = Objects.requireNonNull(Identifier.fromNamespaceAndPath(
+                "westron", "skins/" + username + "_" + skinHash(skinBytes, model)));
+        ClientAsset.@NonNull ResourceTexture texture = new ClientAsset.ResourceTexture(textureId);
+        @NonNull PlayerModelType playerModel = model.equals("slim") ? PlayerModelType.SLIM : PlayerModelType.WIDE;
         entry.model = model;
         entry.targetTextureId = textureId;
 
-        Identifier capeTextureId = null;
+        @Nullable Identifier capeTextureId = null;
         if (capeFile != null && Files.isRegularFile(capeFile)) {
             try {
                 byte[] capeBytes = Files.readAllBytes(capeFile);
-                capeTextureId = Identifier.fromNamespaceAndPath(
-                        "westron", "capes/" + username + "_" + capeHash(capeBytes));
+                capeTextureId = Objects.requireNonNull(Identifier.fromNamespaceAndPath(
+                        "westron", "capes/" + username + "_" + capeHash(capeBytes)));
                 entry.targetCapeTextureId = capeTextureId;
             } catch (IOException ignored) {
             }
@@ -731,9 +731,9 @@ public final class WestronSkinManager {
                     LOGGER.warn("Could not decode cape for player {}: {}", username, ex.getMessage());
                 }
             }
-            return new DecodedTextures(skinImg, capeImg);
+            return new DecodedTextures(Objects.requireNonNull(skinImg), capeImg);
         }, IO_EXECUTOR).whenComplete((decoded, error) -> {
-            if (error != null || decoded == null || decoded.skin == null) {
+            if (error != null || decoded == null) {
                 LOGGER.warn("Minecraft could not decode a Westron skin texture.");
                 return;
             }
@@ -745,15 +745,16 @@ public final class WestronSkinManager {
                     return;
                 }
                 try {
-                    DynamicTexture dynamicSkinTexture = new DynamicTexture(
+                    @NonNull DynamicTexture dynamicSkinTexture = new DynamicTexture(
                             () -> "Westron skin: " + username, decoded.skin);
                     client.getTextureManager().register(texture.texturePath(), dynamicSkinTexture);
 
-                    ClientAsset.ResourceTexture capeResource = null;
+                    ClientAsset.@Nullable ResourceTexture capeResource = null;
                     if (finalCapeTextureId != null && decoded.cape != null) {
                         capeResource = new ClientAsset.ResourceTexture(finalCapeTextureId);
-                        DynamicTexture dynamicCapeTexture = new DynamicTexture(
-                                () -> "Westron cape: " + username, decoded.cape);
+                        @NonNull NativeImage capeImage = Objects.requireNonNull(decoded.cape);
+                        @NonNull DynamicTexture dynamicCapeTexture = new DynamicTexture(
+                                () -> "Westron cape: " + username, capeImage);
                         client.getTextureManager().register(capeResource.texturePath(), dynamicCapeTexture);
                     }
 
@@ -765,9 +766,10 @@ public final class WestronSkinManager {
                             && !texture.texturePath().equals(previous.body().texturePath())) {
                         client.getTextureManager().release(previous.body().texturePath());
                     }
-                    if (previous != null && previous.cape() != null
-                            && (capeResource == null || !capeResource.texturePath().equals(previous.cape().texturePath()))) {
-                        client.getTextureManager().release(previous.cape().texturePath());
+                    ClientAsset.Texture previousCape = previous == null ? null : previous.cape();
+                    if (previousCape != null
+                            && (capeResource == null || !capeResource.texturePath().equals(previousCape.texturePath()))) {
+                        client.getTextureManager().release(previousCape.texturePath());
                     }
                 } catch (RuntimeException exception) {
                     decoded.skin.close();
@@ -779,17 +781,17 @@ public final class WestronSkinManager {
     }
 
     private static final class DecodedTextures {
-        final NativeImage skin;
-        final NativeImage cape;
-        DecodedTextures(NativeImage skin, NativeImage cape) {
+        final @NonNull NativeImage skin;
+        final @Nullable NativeImage cape;
+        DecodedTextures(@NonNull NativeImage skin, @Nullable NativeImage cape) {
             this.skin = skin;
             this.cape = cape;
         }
     }
 
     private static NativeImage decodeSkin(Path skinFile) {
-        try (InputStream input = Files.newInputStream(skinFile)) {
-            NativeImage image = NativeImage.read(input);
+        try (@NonNull InputStream input = Objects.requireNonNull(Files.newInputStream(skinFile))) {
+            @NonNull NativeImage image = Objects.requireNonNull(NativeImage.read(input));
             if (image.getWidth() == 64 && image.getHeight() == 32) {
                 return convertLegacySkin(image);
             }
@@ -804,15 +806,15 @@ public final class WestronSkinManager {
     }
 
     private static NativeImage decodeCape(Path capeFile) {
-        try (InputStream input = Files.newInputStream(capeFile)) {
-            return NativeImage.read(input);
+        try (@NonNull InputStream input = Objects.requireNonNull(Files.newInputStream(capeFile))) {
+            return Objects.requireNonNull(NativeImage.read(input));
         } catch (IOException exception) {
             throw new CompletionException(exception);
         }
     }
 
-    private static NativeImage convertLegacySkin(NativeImage legacy) {
-        NativeImage image = new NativeImage(64, 64, true);
+    private static NativeImage convertLegacySkin(@NonNull NativeImage legacy) {
+        @NonNull NativeImage image = new NativeImage(64, 64, true);
         try {
             image.copyFrom(legacy);
         } finally {
@@ -886,8 +888,9 @@ public final class WestronSkinManager {
                 if (previous.body() != null) {
                     client.getTextureManager().release(previous.body().texturePath());
                 }
-                if (previous.cape() != null) {
-                    client.getTextureManager().release(previous.cape().texturePath());
+                ClientAsset.Texture previousCape = previous.cape();
+                if (previousCape != null) {
+                    client.getTextureManager().release(previousCape.texturePath());
                 }
             });
         }

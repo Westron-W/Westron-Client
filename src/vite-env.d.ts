@@ -2,6 +2,7 @@
 
 type AppLanguage = 'tr' | 'en' | 'de' | 'fr' | 'es' | 'ru' | 'it';
 type AppTheme = 'dark' | 'light';
+type GameBehavior = 'close-on-game-exit' | 'stay-open' | 'hide-and-restore';
 
 interface LauncherState {
   minecraftDir: string;
@@ -17,6 +18,7 @@ interface LauncherState {
   westronModSupported: boolean;
   language: AppLanguage;
   theme: AppTheme;
+  gameBehavior: GameBehavior;
   languageSetupComplete: boolean;
   menuModInstalled: boolean;
   javaAvailable: string;
@@ -38,6 +40,13 @@ interface UpdateStatus {
   transferred?: number;
   total?: number;
   message?: string;
+}
+
+interface GameScreenshot {
+  name: string;
+  size: number;
+  modifiedAt: string;
+  preview: string;
 }
 
 interface MicrosoftAccount {
@@ -171,5 +180,12 @@ interface Window {
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
     openModsFolder: () => Promise<void>;
     openContentFolder: (type: 'resourcepack' | 'shader') => Promise<void>;
+    openProfilesFolder: () => Promise<void>;
+    saveGameBehavior: (behavior: GameBehavior) => Promise<LauncherState>;
+    publishUpdate: () => Promise<{ cancelled: boolean; version?: string }>;
+    listScreenshots: () => Promise<GameScreenshot[]>;
+    readScreenshot: (fileName: string) => Promise<string>;
+    deleteScreenshot: (fileName: string) => Promise<void>;
+    openScreenshotsFolder: () => Promise<void>;
   };
 }

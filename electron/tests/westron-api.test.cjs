@@ -266,16 +266,22 @@ test('launcher explains reverse-proxy gateway failures as API availability issue
   });
 });
 
-test('Westron API requests allow a validated long timeout for update uploads', async () => {
+test('Westron API requests can disable timeouts for large update uploads', async () => {
   const originalTimeout = AbortSignal.timeout;
   let timeoutMs;
+  let requestOptions;
+  let requestUrl;
   AbortSignal.timeout = (value) => {
     timeoutMs = value;
     return new AbortController().signal;
   };
   try {
     const apiClient = createWestronApiClient({
-      fetchImpl: async () => new Response('ok'),
+      fetchImpl: async (url, options) => {
+        requestUrl = url.toString();
+        requestOptions = options;
+        return new Response('ok');
+      },
     });
 
     test('multipart uploads leave Content-Type boundary generation to fetch', async () => {
@@ -306,6 +312,14 @@ test('Westron API requests allow a validated long timeout for update uploads', a
       body: Buffer.from('installer'),
       timeoutMs: 30 * 60 * 1000,
     });
+    assert.equal(timeoutMs, 30 * 60 * 1000);
+    await apiClient.updateAsset('installer.exe', {
+      method: 'POST',
+      body: Buffer.from('large installer'),
+      timeoutMs: null,
+    });
+    assert.equal(requestUrl, `https://westronskin.sytes.net${WESTRON_API_PATHS.updateAsset('installer.exe')}`);
+    assert.equal(requestOptions.signal, undefined);
     assert.equal(timeoutMs, 30 * 60 * 1000);
     await assert.rejects(
       apiClient.request('/api/v1/test', { timeoutMs: 0 }),

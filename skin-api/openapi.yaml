@@ -11,6 +11,7 @@ servers:
 tags:
   - name: system
   - name: authentication
+  - name: content
   - name: profiles
   - name: skins
   - name: capes
@@ -54,7 +55,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^(latest\\.yml|Westron Client Setup (\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
+            pattern: "^(latest\\.yml|(?:Westron-Client-Setup-|Westron Client Setup )(\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
       responses:
         "200":
           description: Update manifest, Windows installer or blockmap file.
@@ -80,7 +81,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^(latest\\.yml|Westron Client Setup (\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
+            pattern: "^(latest\\.yml|(?:Westron-Client-Setup-|Westron Client Setup )(\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
       requestBody:
         required: true
         content:

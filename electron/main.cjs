@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu, nativeImage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const packageJson = require('../package.json');
 const fs = require('node:fs/promises');
@@ -20,6 +20,14 @@ const {
 const { persistInstalledFiles, readInstallIndex, removeInstalledFile } = require('./modrinth-installed-files.cjs');
 const { createMicrosoftAuthService } = require('./microsoft-auth.cjs');
 const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-downloads.cjs');
+const { readUpdateFiles } = require('./update-publisher.cjs');
+const { configureUpdateFeed } = require('./update-config.cjs');
+const {
+  deleteScreenshot,
+  getScreenshotsDirectory,
+  listScreenshots,
+  readScreenshot,
+} = require('./game-screenshots.cjs');
 
 const GAME_VERSION = '26.3';
 const DISPLAY_VERSION = packageJson.version;
@@ -28,7 +36,8 @@ const DEFAULT_LOADER = 'fabric';
 const SUPPORTED_LOADERS = new Set(['vanilla', 'fabric', 'forge']);
 const GAME_VERSION_MIN = [1, 8, 0];
 const GAME_VERSION_MAX = [26, 3, 0];
-const westronApi = createWestronApiClient();
+const WESTRON_SKIN_API_BASE_URL = process.env.WESTRON_SKIN_API_BASE_URL || 'https://westronskin.sytes.net';
+const westronApi = createWestronApiClient({ baseUrl: WESTRON_SKIN_API_BASE_URL });
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const WESTRON_AUTH_FILE = () => path.join(app.getPath('userData'), 'westron-auth.bin');
 const MICROSOFT_AUTH_FILE = () => path.join(app.getPath('userData'), 'microsoft-auth.bin');
@@ -136,6 +145,7 @@ async function downloadUpdate() {
 
 function configureAutoUpdater() {
   if (!canUseAutoUpdater()) return;
+  configureUpdateFeed(autoUpdater, process.platform);
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowDowngrade = false;
@@ -213,10 +223,11 @@ async function readSettings() {
         offlineUsername: 'Player',
         gameVersion: GAME_VERSION,
         loader: DEFAULT_LOADER,
-        language: 'tr',
+        language: 'en',
         theme: 'dark',
         languageSetupComplete: false,
         profileNoticeDismissed: false,
+        gameBehavior: 'close-on-game-exit',
       };
     }
   }
@@ -234,10 +245,12 @@ async function readSettings() {
     offlineUsername: typeof saved.offlineUsername === 'string' ? saved.offlineUsername : 'Player',
     gameVersion: isSupportedGameVersion(saved.gameVersion) ? saved.gameVersion : GAME_VERSION,
     loader: SUPPORTED_LOADERS.has(saved.loader) ? saved.loader : DEFAULT_LOADER,
-    language: ['tr', 'en', 'de', 'fr', 'es', 'ru', 'it'].includes(saved.language) ? saved.language : 'tr',
+    language: ['tr', 'en', 'de', 'fr', 'es', 'ru', 'it'].includes(saved.language) ? saved.language : 'en',
     theme: saved.theme === 'light' ? 'light' : 'dark',
     languageSetupComplete: saved.languageSetupComplete === true,
     profileNoticeDismissed: saved.profileNoticeDismissed === true,
+    gameBehavior: ['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(saved.gameBehavior)
+      ? saved.gameBehavior : 'close-on-game-exit',
   };
 }
 
@@ -827,15 +840,24 @@ async function launchGame({ mode, offlineUsername }) {
     launcherVersion: app.getVersion(),
   });
   const session = kit.launch.run(composition);
+  const gameBehavior = settings.gameBehavior;
   session.exited.then((exit) => {
     if (exit.code !== 0 && !exit.aborted) {
       console.error(`Minecraft ${username} oturumuyla ${exit.code ?? exit.signal} koduyla kapandı.`);
     }
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send('app:game-exited', { username, ...exit });
+      if (gameBehavior === 'hide-and-restore' || gameBehavior === 'stay-open') {
+        if (window.isMinimized()) window.restore();
+        window.show();
+        window.focus();
+      }
     }
+    if (gameBehavior === 'close-on-game-exit') app.quit();
   });
-  app.quit();
+  if (gameBehavior !== 'stay-open') {
+    for (const window of BrowserWindow.getAllWindows()) window.hide();
+  }
   return `Minecraft ${username} adıyla başlatıldı.`;
 }
 
@@ -1218,6 +1240,21 @@ ipcMain.handle('app:choose-minecraft-dir', async () => {
   await saveSettings({ ...settings, minecraftDir: result.filePaths[0] });
   return getState();
 });
+ipcMain.handle('app:open-profiles-folder', async () => {
+  const { minecraftDir } = await readSettings();
+  const directory = path.join(minecraftDir, 'westron-profiles');
+  await fs.mkdir(directory, { recursive: true });
+  const error = await shell.openPath(directory);
+  if (error) throw new Error(`Westron Profiles klasörü açılamadı: ${error}`);
+});
+ipcMain.handle('app:save-game-behavior', async (_event, behavior) => {
+  if (!['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(behavior)) {
+    throw new Error('Westron Client davranışı geçersiz.');
+  }
+  const settings = await readSettings();
+  await saveSettings({ ...settings, gameBehavior: behavior });
+  return getState();
+});
 ipcMain.handle('app:game-versions', getMinecraftVersions);
 ipcMain.handle('app:save-game-options', async (_event, gameVersion, loader, confirmNewProfile = false, dismissNotice = false) => {
   if (!SUPPORTED_LOADERS.has(loader)) throw new Error('Mod yükleyicisi geçersiz.');
@@ -1283,13 +1320,18 @@ ipcMain.handle('app:search-content', async (_event, type, query) => {
 });
 ipcMain.handle('app:project-versions', async (_event, type, projectId) => {
   const state = await getState();
-  const versions = await getProjectVersions(String(projectId), String(type), state.gameVersion, state.loader);
+  const versions = await getProjectVersions(
+    String(projectId),
+    String(type),
+    state.gameVersion,
+    state.loader,
+  );
   return versions.map((version) => ({
     id: version.id,
-    versionNumber: version.version_number,
+    versionNumber: version.versionNumber ?? version.version_number,
     name: version.name,
-    datePublished: version.date_published,
-    gameVersions: version.game_versions,
+    datePublished: version.datePublished ?? version.date_published,
+    gameVersions: version.gameVersions ?? version.game_versions,
     loaders: version.loaders,
   }));
 });
@@ -1315,9 +1357,68 @@ ipcMain.handle('app:install-content', async (_event, type, projectId, selectedVe
 ipcMain.handle('app:update-status', () => updateStatus);
 ipcMain.handle('app:check-for-updates', checkForUpdates);
 ipcMain.handle('app:download-update', downloadUpdate);
+ipcMain.handle('app:publish-update', async () => {
+  const credentials = await readWestronAuth();
+  if (!credentials?.account || credentials.account.email?.trim().toLowerCase() !== 'ermiscaner78@gmail.com'
+    || credentials.account.emailVerified !== true) {
+    throw new Error('Güncelleme yayımlamak için doğrulanmış yayıncı Westron hesabıyla giriş yapın.');
+  }
+  const result = await dialog.showOpenDialog({
+    title: 'Derlenmiş Westron Client sürüm klasörünü seç',
+    defaultPath: path.join(__dirname, '..', 'release'),
+    properties: ['openDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return { cancelled: true };
+  const files = await readUpdateFiles(result.filePaths[0]);
+  const currentCredentials = await readWestronAuth();
+  if (!currentCredentials?.account || currentCredentials.account.email?.trim().toLowerCase() !== 'ermiscaner78@gmail.com'
+    || currentCredentials.account.emailVerified !== true) {
+    throw new Error('Yayın öncesinde Westron yayıncı hesabının oturumu doğrulanamadı.');
+  }
+  for (const file of [files.installer, files.blockmap, files.manifest]) {
+    const upload = (token) => westronApi.updateAsset(file.name, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/vnd.westron.update' },
+      body: file.contents,
+      accessToken: token,
+      timeoutMs: null,
+    });
+    try {
+      await upload(currentCredentials.accessToken);
+    } catch (error) {
+      if (error.status !== 401) throw error;
+      const renewed = await refreshWestronAuth(currentCredentials);
+      await upload(renewed.accessToken);
+    }
+  }
+  return { cancelled: false, version: packageJson.version };
+});
 ipcMain.handle('app:install-update', () => {
   if (updateStatus.status !== 'downloaded') throw new Error('Önce güncelleme indirilmelidir.');
   autoUpdater.quitAndInstall(false, true);
+});
+ipcMain.handle('app:list-screenshots', async () => {
+  const { gameDirectory } = await getState();
+  return listScreenshots(gameDirectory, (filePath) => {
+    const image = nativeImage.createFromPath(filePath);
+    if (image.isEmpty()) return '';
+    return image.resize({ width: 640, height: 360, quality: 'best' }).toDataURL();
+  });
+});
+ipcMain.handle('app:read-screenshot', async (_event, fileName) => {
+  const { gameDirectory } = await getState();
+  return readScreenshot(gameDirectory, fileName);
+});
+ipcMain.handle('app:delete-screenshot', async (_event, fileName) => {
+  const { gameDirectory } = await getState();
+  await deleteScreenshot(gameDirectory, fileName);
+});
+ipcMain.handle('app:open-screenshots-folder', async () => {
+  const { gameDirectory } = await getState();
+  const directory = getScreenshotsDirectory(gameDirectory);
+  await fs.mkdir(directory, { recursive: true });
+  const error = await shell.openPath(directory);
+  if (error) throw new Error(`Ekran görüntüsü klasörü açılamadı: ${error}`);
 });
 registerWestronIpcHandlers(ipcMain, {
   getAccount: async () => {

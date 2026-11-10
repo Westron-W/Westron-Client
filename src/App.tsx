@@ -1,16 +1,17 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { isAppLanguage, SUPPORTED_LANGUAGES, translate, translateUi, type AppLanguage } from './i18n';
 import {
-  ArrowDownToLine, ArrowRight, Box, Check, ChevronDown, CircleHelp, Compass, Image,
+  ArrowDownToLine, ArrowRight, Box, Camera, Check, ChevronDown, CircleHelp, Compass, Image,
   Cpu, FolderOpen, HardDrive, Layers3, LoaderCircle,
   Languages, LogOut, Package, Pause, Play, Plus, RefreshCw, RotateCcw, Search,
-  Settings2, ShieldCheck, Sparkles, Sun, Trash2, Upload, UserRound, X,
+  Settings2, ShieldCheck, Shirt, Sparkles, Sun, Trash2, Upload, UserRound, X,
 } from 'lucide-react';
 
 type ContentType = 'resourcepack' | 'shader';
-type Page = 'home' | 'mods' | 'resourcepacks' | 'shaders' | 'library' | 'appearance' | 'settings';
+type Page = 'home' | 'mods' | 'resourcepacks' | 'shaders' | 'library' | 'appearance' | 'account' | 'screenshots' | 'settings';
+type LibrarySection = 'mods' | 'resourcepacks' | 'shaders';
 const IRIS_PROJECT_ID = 'YL57xq9U';
-const AppLanguageContext = createContext<AppLanguage>('tr');
+const AppLanguageContext = createContext<AppLanguage>('en');
 
 function useUiText() {
   const language = useContext(AppLanguageContext);
@@ -24,6 +25,8 @@ const pageLabels: Record<Page, string> = {
   shaders: 'Shader paketleri',
   library: 'Kütüphane',
   appearance: 'Skin & Pelerin',
+  account: 'Hesap',
+  screenshots: 'Ekran Görüntüleri',
   settings: 'Ayarlar',
 };
 
@@ -50,7 +53,7 @@ export default function App() {
   const [page, setPage] = useState<Page>('home');
   const [state, setState] = useState<LauncherState | null>(null);
   const [languageSetupRequired, setLanguageSetupRequired] = useState(false);
-  const [setupLanguage, setSetupLanguage] = useState<AppLanguage>('tr');
+  const [setupLanguage, setSetupLanguage] = useState<AppLanguage>('en');
   const [offlineUsername, setOfflineUsername] = useState('Player');
   const [mods, setMods] = useState<ModrinthProject[]>([]);
   const [packProjects, setPackProjects] = useState<ModrinthProject[]>([]);
@@ -75,17 +78,21 @@ export default function App() {
     name: string; size: number; type: 'mod' | ContentType;
   } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [screenshots, setScreenshots] = useState<GameScreenshot[]>([]);
+  const [screenshotStatus, setScreenshotStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [publisherBusy, setPublisherBusy] = useState(false);
+  const [librarySection, setLibrarySection] = useState<LibrarySection>('mods');
   const [microsoftAccount, setMicrosoftAccount] = useState<MicrosoftAccount | null>(null);
   const [microsoftBusy, setMicrosoftBusy] = useState(false);
   const [westronAccount, setWestronAccount] = useState<WestronAccount | null>(null);
   const [westronProfile, setWestronProfile] = useState<WestronProfile | null>(null);
   const [skinAvatarFailed, setSkinAvatarFailed] = useState(false);
-  const text = (value: string) => translateUi(state?.language ?? 'tr', value);
+  const text = (value: string) => translateUi(state?.language ?? 'en', value);
   const installPercent = Math.max(0, Math.min(100, Math.round(installProgress?.overallPercent ?? 0)));
   const pageTitle = text(pageLabels[page]);
 
   useEffect(() => {
-    document.documentElement.lang = state?.language ?? 'tr';
+    document.documentElement.lang = state?.language ?? 'en';
   }, [state?.language]);
 
   useEffect(() => {
@@ -118,6 +125,25 @@ export default function App() {
     setState(await window.nocturne.getState());
   }
 
+  async function refreshScreenshots() {
+    if (!window.nocturne) {
+      setScreenshotStatus('error');
+      return;
+    }
+    setBusy('screenshots');
+    setError('');
+    setScreenshotStatus('loading');
+    try {
+      setScreenshots(await window.nocturne.listScreenshots());
+      setScreenshotStatus('ready');
+    } catch (reason) {
+      setScreenshotStatus('error');
+      reportError(reason);
+    } finally {
+      setBusy('');
+    }
+  }
+
   useEffect(() => {
     if (!window.nocturne) {
       reportError(new Error('Launcher bağlantısı yüklenemedi. Uygulamayı yeniden başlatın.'));
@@ -144,6 +170,10 @@ export default function App() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (page === 'screenshots') void refreshScreenshots();
+  }, [page, state?.gameDirectory]);
 
   useEffect(() => {
     if (!window.nocturne) return undefined;
@@ -278,21 +308,49 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (page !== 'mods' || mods.length > 0 || !state || state.loader === 'vanilla') return;
-    void Promise.resolve().then(() => window.nocturne.searchMods('')).then(setMods).catch(reportError);
-  }, [page, mods.length, state?.gameVersion, state?.loader]);
+  async function saveGameBehavior(behavior: GameBehavior): Promise<void> {
+      setBusy('game-behavior');
+      setError('');
+      try {
+        setState(await window.nocturne.saveGameBehavior(behavior));
+        setNotice(text('Westron Client davranışı kaydedildi.'));
+      } catch (reason) {
+        reportError(reason);
+      } finally {
+        setBusy('');
+      }
+  }
+
+  async function publishUpdate(): Promise<void> {
+      setPublisherBusy(true);
+      setError('');
+      setNotice('');
+      try {
+        const result = await window.nocturne.publishUpdate();
+        if (!result.cancelled) setNotice(`${text('Güncelleme yayımlandı.')} ${result.version ?? ''}`);
+      } catch (reason) {
+        reportError(reason);
+      } finally {
+        setPublisherBusy(false);
+    }
+  }
 
   useEffect(() => {
-    if (page === 'resourcepacks') {
+    if ((page !== 'mods' && !(page === 'library' && librarySection === 'mods'))
+      || mods.length > 0 || !state || state.loader === 'vanilla') return;
+    void Promise.resolve().then(() => window.nocturne.searchMods('')).then(setMods).catch(reportError);
+  }, [page, librarySection, mods.length, state?.gameVersion, state?.loader]);
+
+  useEffect(() => {
+    if (page === 'resourcepacks' || (page === 'library' && librarySection === 'resourcepacks')) {
       setQuery('');
       void searchPacks('resourcepack', '');
     }
-    if (page === 'shaders') {
+    if (page === 'shaders' || (page === 'library' && librarySection === 'shaders')) {
       setQuery('');
       void searchPacks('shader', '');
     }
-  }, [page, state?.gameVersion]);
+  }, [page, librarySection, state?.gameVersion]);
 
   useEffect(() => {
     if (!dependencyPrompt && !removalPrompt && !profilePrompt) return undefined;
@@ -396,7 +454,11 @@ export default function App() {
       setMicrosoftAccount(account);
       setNotice(`${account.username} Microsoft hesabıyla giriş yaptı.`);
     } catch (reason) {
-      reportError(reason);
+      if (reason instanceof Error && /Microsoft ile giriş iptal edildi/i.test(reason.message)) {
+        setNotice(text('Microsoft hesabıyla giriş iptal edildi.'));
+      } else {
+        reportError(reason);
+      }
     } finally {
       setMicrosoftBusy(false);
     }
@@ -423,10 +485,9 @@ export default function App() {
     }
   }
 
-  const installedCount = state?.mods.length ?? 0;
 
   return (
-    <AppLanguageContext.Provider value={state?.language ?? 'tr'}>
+    <AppLanguageContext.Provider value={state?.language ?? 'en'}>
     <div className="app-shell">
       <aside className="sidebar">
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage('home'); }}>
@@ -473,17 +534,24 @@ export default function App() {
         <div className="nav-label">{text('MENÜ')}</div>
         <nav className="nav-list">
           <NavButton icon={<Compass />} label={text('Genel Bakış')} active={page === 'home'} onClick={() => setPage('home')} />
-          <NavButton icon={<Sparkles />} label={text('Mod keşfet')} active={page === 'mods'} onClick={() => setPage('mods')} badge="MODRINTH" />
-          <NavButton icon={<Image />} label={text('Kaynak paketleri')} active={page === 'resourcepacks'} onClick={() => setPage('resourcepacks')} badge="MODRINTH" />
-          <NavButton icon={<Sun />} label={text('Shader paketleri')} active={page === 'shaders'} onClick={() => setPage('shaders')} badge="MODRINTH" />
-          <NavButton icon={<Package />} label={text('Kütüphane')} active={page === 'library'} onClick={() => setPage('library')} count={installedCount} />
-          <NavButton icon={<UserRound />} label={text('Skin & Pelerin')} active={page === 'appearance'} onClick={() => setPage('appearance')} />
+          <NavButton
+            icon={<Package />}
+            label={text('Kütüphane')}
+            active={page === 'library'}
+            onClick={() => setPage('library')}
+          />
+          <NavButton icon={<Sparkles />} label={text('Modlar')} active={page === 'mods'} onClick={() => setPage('mods')} badge="MODRINTH" />
+          <NavButton icon={<Image />} label={text('Kaynak Paketleri')} active={page === 'resourcepacks'} onClick={() => setPage('resourcepacks')} badge="MODRINTH" />
+          <NavButton icon={<Sun />} label={text('Shader Paketleri')} active={page === 'shaders'} onClick={() => setPage('shaders')} badge="MODRINTH" />
+          <NavButton icon={<Camera />} label={text('Ekran Görüntüleri')} active={page === 'screenshots'} onClick={() => setPage('screenshots')} count={screenshots.length} />
+          <NavButton icon={<Shirt />} label={text('Skin & Pelerin')} active={page === 'appearance'} onClick={() => setPage('appearance')} />
+          <NavButton icon={<UserRound />} label={text('Hesap')} active={page === 'account'} onClick={() => setPage('account')} />
         </nav>
 
         <div className="sidebar-spacer" />
         <div className="sidebar-card">
           <span className="online-dot" />
-          <div><strong>{state?.loaderInstalled ? `${state.loader.toUpperCase()} ${text('READY')}` : text('PROFILE READY')}</strong><small>Minecraft {state?.gameVersion ?? '…'}</small></div>
+          <div><strong>{text('PROFILE READY')}</strong><small>Minecraft {state?.gameVersion ?? '…'}</small></div>
           <ShieldCheck size={16} className="sidebar-shield" />
         </div>
         <NavButton icon={<Settings2 />} label={text('Ayarlar')} active={page === 'settings'} onClick={() => setPage('settings')} />
@@ -496,28 +564,15 @@ export default function App() {
           <div className="topbar-right">
             <span className="top-version"><span className="online-dot" />{state?.menuModInstalled ? text('Westron Client hazır') : state?.loaderInstalled ? `${state.loader} ${text('kurulu')}` : `${text('Sürüm')} ${state?.gameVersion ?? '…'}`}</span>
             <button className="icon-button" aria-label={text('Yardım')} onClick={() => setNotice(text('Profil kurulumu ve içerik yönetimi için sol menüyü kullanın.'))}><CircleHelp size={17} /></button>
-            {westronProfile?.skin && !skinAvatarFailed ? (
-              <span className="avatar avatar-skin" aria-label={westronProfile.username}>
-                <img
-                  className="avatar-face"
-                  src={`${westronProfile.skin.url}${westronProfile.skin.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(westronProfile.skin.updatedAt)}`}
-                  alt=""
-                  onError={() => setSkinAvatarFailed(true)}
-                />
-                <img
-                  className="avatar-face-overlay"
-                  src={`${westronProfile.skin.url}${westronProfile.skin.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(westronProfile.skin.updatedAt)}`}
-                  alt=""
-                  onError={() => setSkinAvatarFailed(true)}
-                />
-              </span>
-            ) : <div className="avatar">W</div>}
+            {westronProfile?.skin && !skinAvatarFailed
+              ? <div className="avatar avatar-skin"><SkinFaceAvatar profile={westronProfile} size="small" onError={() => setSkinAvatarFailed(true)} /></div>
+              : <div className="avatar">W</div>}
           </div>
         </header>
 
         <div className="content">
-          {error && <div className="toast toast-error"><X size={16} />{translateUi(state?.language ?? 'tr', error)}<button onClick={() => setError('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
-          {notice && <div className="toast toast-success"><Check size={16} />{translateUi(state?.language ?? 'tr', notice)}<button onClick={() => setNotice('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
+          {error && <div className="toast toast-error"><X size={16} />{translateUi(state?.language ?? 'en', error)}<button onClick={() => setError('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
+          {notice && <div className="toast toast-success"><Check size={16} />{translateUi(state?.language ?? 'en', notice)}<button onClick={() => setNotice('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
           {updateStatus && ['checking', 'available', 'downloading', 'downloaded', 'up-to-date', 'error'].includes(updateStatus.status) && (
             <UpdateBanner status={updateStatus} onCheck={() => { void checkForUpdates(); }} onDownload={() => { void downloadUpdate(); }} onRestart={() => {
               void window.nocturne.installUpdate().catch(reportError);
@@ -607,32 +662,73 @@ export default function App() {
           )}
           {page === 'library' && (
             <LibraryPage
-              state={state}
+              section={librarySection}
+              onSectionChange={setLibrarySection}
+            >
+              <InstalledLibrarySection
+                section={librarySection}
+                mods={state?.mods ?? []}
+                resourcePacks={state?.resourcePacks ?? []}
+                shaderPacks={state?.shaderPacks ?? []}
+                busy={busy}
+                onRemoveMod={requestModRemoval}
+                onRemovePack={requestPackRemoval}
+                onOpenFolder={() => perform('folder', () => librarySection === 'mods'
+                  ? window.nocturne.openModsFolder()
+                  : window.nocturne.openContentFolder(librarySection === 'resourcepacks' ? 'resourcepack' : 'shader'))}
+              />
+            </LibraryPage>
+          )}
+          {page === 'screenshots' && (
+            <ScreenshotsPage
+              screenshots={screenshots}
+              status={screenshotStatus}
               busy={busy}
-              onRemove={requestModRemoval}
-              onOpenFolder={() => perform('folder', () => window.nocturne.openModsFolder())}
-              onMods={() => setPage('mods')}
+              onRefresh={() => { void refreshScreenshots(); }}
+              onDelete={async (fileName) => {
+                await perform(`screenshot:${fileName}`, async () => {
+                  await window.nocturne.deleteScreenshot(fileName);
+                  setScreenshots((items) => items.filter((item) => item.name !== fileName));
+                }, () => text('Ekran görüntüsü silindi.'));
+              }}
+              onOpenFolder={() => perform('folder', () => window.nocturne.openScreenshotsFolder())}
             />
           )}
           {page === 'appearance' && (
             <AppearancePage
               account={westronAccount}
               profile={westronProfile}
-              onAccountChange={setWestronAccount}
               onProfileChange={setWestronProfile}
+              onOpenAccount={() => setPage('account')}
             />
+          )}
+          {page === 'account' && (
+            <>
+              <PageHeading eyebrow={text('HESAP')} title={text('Hesap')} description={text('Westron hesap bilgilerini ve giriş ayarlarını yönet.')} />
+              <AccountPage
+                account={westronAccount}
+                profile={westronProfile}
+                onAccountChange={setWestronAccount}
+                onProfileChange={setWestronProfile}
+              />
+            </>
           )}
           {page === 'settings' && (
             <SettingsPage
               state={state}
-              language={state?.language ?? 'tr'}
+              language={state?.language ?? 'en'}
               onLanguageChange={(language: LauncherState['language']) => { void saveLanguage(language); }}
               theme={state?.theme ?? 'dark'}
               onThemeChange={(theme: AppTheme) => { void saveTheme(theme); }}
-              onChooseFolder={() => perform('folder', () => window.nocturne.chooseMinecraftDir())}
               busy={busy}
               updateStatus={updateStatus}
               onCheckUpdates={() => { void checkForUpdates(); }}
+              gameBehavior={state?.gameBehavior ?? 'close-on-game-exit'}
+              onGameBehaviorChange={(behavior) => { void saveGameBehavior(behavior); }}
+              onOpenProfilesFolder={() => perform('folder', () => window.nocturne.openProfilesFolder())}
+              publisherAccount={westronAccount}
+              publisherBusy={publisherBusy}
+              onPublishUpdate={() => { void publishUpdate(); }}
             />
           )}
         </div>
@@ -672,7 +768,7 @@ export default function App() {
           onCancel={() => setProfilePrompt(null)}
           onConfirm={() => { void saveGameOptions(profilePrompt.gameVersion, profilePrompt.loader, true); }}
           busy={busy === 'profile-options'}
-          language={state?.language ?? 'tr'}
+          language={state?.language ?? 'en'}
         />
       )}
       {languageSetupRequired && (
@@ -696,7 +792,7 @@ function LanguageSetupModal({ language, onLanguageChange, busy, error, onContinu
   error: string;
   onContinue: () => void;
 }) {
-  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
+  const t = (key: string) => translateUi(language, key);
   return (
     <div className="dependency-modal-backdrop language-setup-backdrop">
       <section className="dependency-modal language-setup-modal" role="dialog" aria-modal="true" aria-labelledby="language-setup-title">
@@ -1265,22 +1361,220 @@ function ModrinthPackPage({ type, projects, query, setQuery, busy, installedFile
   );
 }
 
-function LibraryPage({ state, busy, onRemove, onOpenFolder, onMods }: {
-  state: LauncherState | null; busy: string; onRemove: (name: string) => void; onOpenFolder: () => void; onMods: () => void;
+function LibraryPage({ section, onSectionChange, children }: {
+  section: LibrarySection;
+  onSectionChange: (section: LibrarySection) => void;
+  children: ReactNode;
 }) {
   const t = useUiText();
+  const sections: { id: LibrarySection; label: string; icon: React.ReactNode }[] = [
+    { id: 'mods', label: t('Modlar'), icon: <Sparkles size={15} /> },
+    { id: 'resourcepacks', label: t('Kaynak Paketleri'), icon: <Image size={15} /> },
+    { id: 'shaders', label: t('Shader Paketleri'), icon: <Sun size={15} /> },
+  ];
   return (
     <>
-      <PageHeading eyebrow={t('OYUN DOSYALARI')} title={t('Kütüphanen.')} description={t('Yüklü modlarını yönet, dosya konumuna git ve koleksiyonunu büyüt.')}>
-        <button className="button button-secondary" onClick={onOpenFolder}><FolderOpen size={16} />{t('Klasörü aç')}</button>
-      </PageHeading>
-      <div className="library-summary">
-        <div className="library-stat"><div className="card-icon violet"><Package size={19} /></div><div><strong>{state?.mods.length ?? 0}</strong><span>{t('YÜKLÜ MOD')}</span></div></div>
-        <div className="library-stat"><div className="card-icon blue"><Layers3 size={19} /></div><div><strong>{state?.fabricInstalled ? t('Hazır') : t('Kurulmadı')}</strong><span>{t('FABRIC PROFİLİ')}</span></div></div>
-        <div className="library-stat"><div className="card-icon green"><Cpu size={19} /></div><div><strong>{state?.gameVersion ?? '26.3'}</strong><span>{t('MINECRAFT SÜRÜMÜ')}</span></div></div>
+      <PageHeading eyebrow={t('OYUN DOSYALARI')} title={t('Kütüphanen.')} description={t('Yüklü modları, kaynak paketlerini ve shader paketlerini kaldır.')} />
+      <nav className="library-sections" aria-label={t('Kütüphane bölümleri')}>
+        {sections.map((item) => (
+          <button
+            type="button"
+            className={`library-section-tab ${section === item.id ? 'selected' : ''}`}
+            aria-current={section === item.id ? 'page' : undefined}
+            key={item.id}
+            onClick={() => onSectionChange(item.id)}
+          >
+            {item.icon}{item.label}
+          </button>
+        ))}
+      </nav>
+      <div className="library-section-content">{children}</div>
+    </>
+  );
+}
+
+function InstalledLibrarySection({
+  section,
+  mods,
+  resourcePacks,
+  shaderPacks,
+  busy,
+  onRemoveMod,
+  onRemovePack,
+  onOpenFolder,
+}: {
+  section: LibrarySection;
+  mods: LauncherState['mods'];
+  resourcePacks: LauncherState['resourcePacks'];
+  shaderPacks: LauncherState['shaderPacks'];
+  busy: string;
+  onRemoveMod: (fileName: string) => void;
+  onRemovePack: (type: ContentType, fileName: string) => void;
+  onOpenFolder: () => void;
+}) {
+  const t = useUiText();
+  const isMods = section === 'mods';
+  const isResources = section === 'resourcepacks';
+  const items = isMods ? mods : isResources ? resourcePacks : shaderPacks;
+  const title = isMods ? t('Yüklü modlar') : isResources ? t('Yüklü kaynak paketleri') : t('Yüklü shader paketleri');
+
+  return (
+    <section className="installed-library-panel">
+      <div className="installed-library-heading">
+        <div>
+          <span className="eyebrow">{t('YÜKLÜ İÇERİK')}</span>
+          <h2>{title}</h2>
+          <p>{t('Bu bölümden yüklü dosyaları kaldırabilirsin.')}</p>
+        </div>
+        <button type="button" className="button button-secondary" onClick={onOpenFolder}>
+          <FolderOpen size={15} />{t('Klasörü aç')}
+        </button>
       </div>
-      {state?.mods.length ? <div className="library-panel"><div className="panel-heading"><div><h3>{t('Mod dosyaları')}</h3><span>{t('Minecraft mods klasöründeki JAR dosyaları')}</span></div><button className="button button-secondary button-small" onClick={onMods}><Sparkles size={14} />{t('Mod keşfet')}</button></div><ModList mods={state.mods} busy={busy} onRemove={onRemove} /></div> :
-        <div className="empty-state library-empty"><div className="empty-icon"><Package size={22} /></div><strong>{t('Kütüphanen henüz boş.')}</strong><span>{t('Modrinth kataloğundan sevdiğin modları eklemeye başla.')}</span><button className="button button-primary button-small" onClick={onMods}><Sparkles size={14} />{t('Mod keşfet')}</button></div>}
+      {items.length > 0 ? (
+        <div className="mod-list">
+          {items.map((item) => (
+            <div className="mod-list-item" key={item.name}>
+              <div className="list-mod-icon">{isMods ? <Package size={16} /> : isResources ? <Image size={16} /> : <Sun size={16} />}</div>
+              <div className="list-mod-name"><strong>{item.name}</strong><span>{formatBytes(item.size)}</span></div>
+              <span className="list-mod-type">{isMods ? t('JAR MOD') : t('ZIP PAKET')}</span>
+              <button
+                type="button"
+                className="remove-mod"
+                aria-label={`${item.name} ${t('dosyasını kaldır')}`}
+                title={t('Sil')}
+                disabled={Boolean(busy)}
+                onClick={() => {
+                  if (section === 'mods') onRemoveMod(item.name);
+                  else onRemovePack(section === 'resourcepacks' ? 'resourcepack' : 'shader', item.name);
+                }}
+              >
+                {busy === `remove:${item.name}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state installed-library-empty">
+          <div className="empty-icon"><Trash2 size={19} /></div>
+          <strong>{t('Yüklü içerik yok')}</strong>
+          <span>{t('Bu kategoride kaldırılabilecek içerik bulunmuyor.')}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ScreenshotsPage({ screenshots, status, busy, onRefresh, onDelete, onOpenFolder }: {
+  screenshots: GameScreenshot[];
+  status: 'loading' | 'ready' | 'error';
+  busy: string;
+  onRefresh: () => void;
+  onDelete: (fileName: string) => void;
+  onOpenFolder: () => void;
+}) {
+  const t = useUiText();
+  const language = useContext(AppLanguageContext);
+  const [selectedScreenshot, setSelectedScreenshot] = useState<GameScreenshot | null>(null);
+  const [selectedScreenshotImage, setSelectedScreenshotImage] = useState('');
+  const [loadingFullImage, setLoadingFullImage] = useState(false);
+  const [fullImageError, setFullImageError] = useState(false);
+
+  async function openScreenshot(screenshot: GameScreenshot) {
+    setSelectedScreenshot(screenshot);
+    setSelectedScreenshotImage('');
+    setFullImageError(false);
+    setLoadingFullImage(true);
+    try {
+      setSelectedScreenshotImage(await window.nocturne.readScreenshot(screenshot.name));
+    } catch {
+      setFullImageError(true);
+    } finally {
+      setLoadingFullImage(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedScreenshot) return undefined;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setSelectedScreenshot(null);
+        setSelectedScreenshotImage('');
+      }
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [selectedScreenshot]);
+
+  return (
+    <>
+      <PageHeading eyebrow={t('OYUN GALERİSİ')} title={t('Ekran Görüntüleri')} description={t('Minecraft içinde aldığın ekran görüntülerini görüntüle ve yönet.')}>
+        <div className="page-heading-actions">
+          <button className="button button-secondary" onClick={onRefresh} disabled={busy === 'screenshots'}>
+            {busy === 'screenshots' ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+            {t('Yenile')}
+          </button>
+          <button className="button button-secondary" onClick={onOpenFolder}><FolderOpen size={15} />{t('Dosya konumunu aç')}</button>
+        </div>
+      </PageHeading>
+      {status === 'loading' && screenshots.length === 0 ? (
+        <div className="empty-state screenshot-loading" role="status" aria-live="polite">
+          <LoaderCircle className="spin" size={22} />
+          <strong>{t('Ekran görüntüleri yükleniyor…')}</strong>
+        </div>
+      ) : status === 'error' && screenshots.length === 0 ? (
+        <div className="empty-state screenshot-loading" role="status">
+          <div className="empty-icon"><Camera size={22} /></div>
+          <strong>{t('Ekran görüntüleri yüklenemedi.')}</strong>
+          <button type="button" className="button button-secondary button-small" onClick={onRefresh}>{t('Yenile')}</button>
+        </div>
+      ) : screenshots.length ? (
+        <div className="screenshot-grid">
+          {screenshots.map((screenshot) => (
+            <article className="screenshot-card" key={screenshot.name}>
+              <button
+                type="button"
+                className="screenshot-preview-button"
+                aria-label={`${screenshot.name} ${t('görüntüsünü büyüt')}`}
+                onClick={() => { void openScreenshot(screenshot).catch(() => undefined); }}
+              >
+                <img src={screenshot.preview} alt={screenshot.name} loading="lazy" />
+              </button>
+              <div className="screenshot-card-info">
+                <div><strong title={screenshot.name}>{screenshot.name}</strong><span>{new Intl.DateTimeFormat(languageLocales[language], { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(screenshot.modifiedAt))} · {formatBytes(screenshot.size)}</span></div>
+                <button className="remove-mod" aria-label={`${screenshot.name} ${t('dosyasını kaldır')}`} title={t('Sil')} disabled={Boolean(busy)} onClick={() => onDelete(screenshot.name)}>
+                  {busy === `screenshot:${screenshot.name}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state"><div className="empty-icon"><Camera size={22} /></div><strong>{t('Henüz ekran görüntüsü yok.')}</strong><span>{t('Minecraft içinde F2 tuşuyla ekran görüntüsü al; burada görünecektir.')}</span></div>
+      )}
+      {selectedScreenshot && (
+        <div
+          className="screenshot-modal-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedScreenshot(null);
+              setSelectedScreenshotImage('');
+            }
+          }}
+        >
+          <section className="screenshot-modal" role="dialog" aria-modal="true" aria-label={selectedScreenshot.name}>
+            <div className="screenshot-modal-heading">
+              <strong title={selectedScreenshot.name}>{selectedScreenshot.name}</strong>
+              <button type="button" className="icon-button" aria-label={t('Kapat')} onClick={() => { setSelectedScreenshot(null); setSelectedScreenshotImage(''); }}><X size={18} /></button>
+            </div>
+            {loadingFullImage
+              ? <div className="screenshot-modal-loading"><LoaderCircle className="spin" size={22} />{t('Ekran görüntüsü yükleniyor…')}</div>
+              : fullImageError
+                ? <div className="screenshot-modal-loading">{t('Ekran görüntüsü yüklenemedi.')}</div>
+                : selectedScreenshotImage && <img src={selectedScreenshotImage} alt={selectedScreenshot.name} />}
+          </section>
+        </div>
+      )}
     </>
   );
 }
@@ -1293,11 +1587,27 @@ function ModList({ mods, busy, onRemove }: { mods: LauncherState['mods']; busy: 
   </div>)}</div>;
 }
 
-function SettingsPage({ state, language, onLanguageChange, theme, onThemeChange, onChooseFolder, busy, updateStatus, onCheckUpdates }: {
-  state: LauncherState | null; language: AppLanguage; onLanguageChange: (language: AppLanguage) => void; theme: AppTheme; onThemeChange: (theme: AppTheme) => void; onChooseFolder: () => void; busy: string;
-  updateStatus: UpdateStatus | null; onCheckUpdates: () => void;
+function SettingsPage({
+  state, language, onLanguageChange, theme, onThemeChange, busy, updateStatus, onCheckUpdates,
+  gameBehavior, onGameBehaviorChange,
+  onOpenProfilesFolder, publisherAccount, publisherBusy, onPublishUpdate,
+}: {
+  state: LauncherState | null;
+  language: AppLanguage;
+  onLanguageChange: (language: AppLanguage) => void;
+  theme: AppTheme;
+  onThemeChange: (theme: AppTheme) => void;
+  busy: string;
+  updateStatus: UpdateStatus | null;
+  onCheckUpdates: () => void;
+  gameBehavior: GameBehavior;
+  onGameBehaviorChange: (behavior: GameBehavior) => void;
+  onOpenProfilesFolder: () => void;
+  publisherAccount: WestronAccount | null;
+  publisherBusy: boolean;
+  onPublishUpdate: () => void;
 }) {
-  const t = (key: Parameters<typeof translate>[1]) => translate(language, key);
+  const t = (key: string) => translateUi(language, key);
   const ui = (value: string) => translateUi(language, value);
   return (
     <>
@@ -1329,8 +1639,12 @@ function SettingsPage({ state, language, onLanguageChange, theme, onThemeChange,
       </section>
       <section className="settings-panel">
         <div className="settings-heading"><div className="card-icon violet"><Settings2 size={18} /></div><div><h3>{t('gameInstallation')}</h3><span>{t('gameInstallationDescription')}</span></div></div>
-        <div className="setting-row"><div><strong>{t('minecraftFolder')}</strong><span>{t('profileModsLocation')}</span><code title={state?.minecraftDir}>{state?.minecraftDir ?? t('loading')}</code></div><button className="button button-secondary button-small" onClick={onChooseFolder} disabled={Boolean(busy)}><FolderOpen size={15} />{t('chooseFolder')}</button></div>
+        <div className="setting-row"><div><strong>{t('minecraftFolder')}</strong><span>{t('profileModsLocation')}</span><code title={state?.minecraftDir}>{state?.minecraftDir ?? t('loading')}</code></div><button className="button button-secondary button-small" onClick={onOpenProfilesFolder} disabled={Boolean(busy)}><FolderOpen size={15} />{t('Westron Profiles klasörünü aç')}</button></div>
         <div className="setting-row"><div><strong>{t('selectedProfile')}</strong><span>{state?.gameDirectory}</span></div><span className="setting-value">{state?.gameVersion ?? '…'} · {state?.loader ?? '…'}</span></div>
+      </section>
+      <section className="settings-panel">
+        <div className="settings-heading"><div className="card-icon violet"><Play size={18} /></div><div><h3>{t('Westron Client davranışı')}</h3><span>{t('Minecraft çalışırken ve kapandıktan sonra launcher davranışını seç.')}</span></div></div>
+        <div className="setting-row"><div><strong>{t('Oyun ve launcher davranışı')}</strong><span>{t('Varsayılan: oyun kapandığında launcher da kapanır.')}</span></div><select value={gameBehavior} onChange={(event) => { if (['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(event.target.value)) onGameBehaviorChange(event.target.value as GameBehavior); }} disabled={Boolean(busy)}><option value="close-on-game-exit">{t('Oyun kapandığında Westron Client kapansın')}</option><option value="stay-open">{t('Westron Client her zaman açık kalsın')}</option><option value="hide-and-restore">{t('Oyun açılınca gizle, oyun kapanınca geri aç')}</option></select></div>
       </section>
       <section className="settings-panel system-panel">
         <div className="settings-heading"><div className="card-icon blue"><Cpu size={18} /></div><div><h3>{t('systemStatus')}</h3><span>{t('requiredComponents')}</span></div></div>
@@ -1339,7 +1653,7 @@ function SettingsPage({ state, language, onLanguageChange, theme, onThemeChange,
         <div className="system-row"><span>Westron Client</span><strong className={state?.menuModInstalled ? 'text-good' : ''}>{state?.menuModInstalled ? t('installed') : state?.westronModSupported ? t('notInstalled') : t('unsupportedProfile')}</strong><span className="system-path">{t('supportedFabricOnly')}</span></div>
       </section>
       <section className="settings-panel update-settings">
-        <div className="settings-heading"><div className="card-icon violet"><ArrowDownToLine size={18} /></div><div><h3>{t('updates')}</h3><span>{t('installedVersion')} {state?.displayVersion ?? '…'} · {t('updatesHttps')}</span></div></div>
+        <div className="settings-heading"><div className="card-icon violet"><ArrowDownToLine size={18} /></div><div><h3>{t('updates')}</h3><span>{t('installedVersion')} {state?.displayVersion ?? '…'}</span></div></div>
         <div className="update-settings-row">
           <span>{updateStatus?.message ? translateUi(language, updateStatus.message) : t('updateAnytime')}</span>
           <button className="button button-secondary button-small" onClick={onCheckUpdates} disabled={updateStatus?.status === 'checking'}>
@@ -1348,6 +1662,12 @@ function SettingsPage({ state, language, onLanguageChange, theme, onThemeChange,
           </button>
         </div>
       </section>
+      {publisherAccount?.email.trim().toLowerCase() === 'ermiscaner78@gmail.com' && publisherAccount.emailVerified && (
+        <section className="settings-panel update-publisher-panel">
+          <div className="settings-heading"><div className="card-icon blue"><ArrowDownToLine size={18} /></div><div><h3>{t('Güncelleme yayımla')}</h3><span>{t('Yalnızca doğrulanmış yayıncı Westron hesabı kullanabilir.')}</span></div></div>
+          <div className="update-settings-row"><span>{t('Derlenmiş release klasöründeki kurulum, blockmap ve latest.yml dosyalarını güvenli yayın servisine yükle.')}</span><button className="button button-secondary button-small" onClick={onPublishUpdate} disabled={publisherBusy}>{publisherBusy ? <LoaderCircle className="spin" size={14} /> : <Upload size={14} />}{publisherBusy ? t('Yayımlanıyor…') : t('Sürüm dosyalarını seç ve yayımla')}</button></div>
+        </section>
+      )}
       <div className="settings-note"><ShieldCheck size={17} /><span>{ui('Minecraft, giriş yöntemi olarak ana ekranda seçilen doğrulanmış Microsoft hesabını veya ayrı çevrimdışı kullanıcı adını kullanır. Westron Skin hesabı oyun oturumu sağlamaz.')}</span></div>
     </>
   );
@@ -1356,24 +1676,21 @@ function SettingsPage({ state, language, onLanguageChange, theme, onThemeChange,
 function AppearancePage({
   account,
   profile,
-  onAccountChange,
   onProfileChange,
+  onOpenAccount,
 }: {
   account: WestronAccount | null;
   profile: WestronProfile | null;
-  onAccountChange: (account: WestronAccount | null) => void;
   onProfileChange: (profile: WestronProfile | null) => void;
+  onOpenAccount: () => void;
 }) {
   const t = useUiText();
   return (
     <>
       <PageHeading eyebrow={t('KİŞİSELLEŞTİRME')} title={t('Skin & Pelerin.')} description={t('Westron hesabındaki görünümü yönet ve diğer oyuncularla paylaş.')} />
-      <WestronAccountPanel
-        account={account}
-        profile={profile}
-        onAccountChange={onAccountChange}
-        onProfileChange={onProfileChange}
-      />
+      {account
+        ? <SkinAppearancePanel profile={profile} onProfileChange={onProfileChange} />
+        : <section className="settings-panel account-appearance-required"><div className="settings-heading"><div className="card-icon violet"><UserRound size={18} /></div><div><h3>{t('Westron hesabı gerekli')}</h3><span>{t('Skin ve pelerinini yönetmek için Hesap menüsünden giriş yap.')}</span></div></div><button className="button button-primary button-small" onClick={onOpenAccount}><UserRound size={15} />{t('Hesaba git')}</button></section>}
     </>
   );
 }
@@ -1562,6 +1879,138 @@ function SkinModelPreview({ profile, language }: {
   );
 }
 
+function AccountPage({ account, profile, onAccountChange, onProfileChange }: {
+  account: WestronAccount | null;
+  profile: WestronProfile | null;
+  onAccountChange: (account: WestronAccount | null) => void;
+  onProfileChange: (profile: WestronProfile | null) => void;
+}) {
+  return (
+    <WestronAccountPanel account={account} profile={profile} onAccountChange={onAccountChange} onProfileChange={onProfileChange} />
+  );
+}
+
+function SkinFaceAvatar({ profile, size, fallback, onError }: {
+  profile: WestronProfile | null;
+  size: 'small' | 'large';
+  fallback?: string;
+  onError?: () => void;
+}) {
+  const skin = profile?.skin;
+  if (!skin) return <span className={`skin-face-fallback skin-face-fallback-${size}`}>{fallback ?? 'W'}</span>;
+  const src = `${skin.url}${skin.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(skin.updatedAt)}`;
+  return (
+    <span className={`skin-face-texture skin-face-texture-${size}`} aria-label={profile.username}>
+      <img className="skin-face-base" src={src} alt="" onError={onError} />
+      <img className="skin-face-overlay" src={src} alt="" onError={onError} />
+    </span>
+  );
+}
+
+function SkinAppearancePanel({ profile, onProfileChange }: {
+  profile: WestronProfile | null;
+  onProfileChange: (profile: WestronProfile | null) => void;
+}) {
+  const language = useContext(AppLanguageContext);
+  const t = (value: string) => translateUi(language, value);
+  const [skinModel, setSkinModel] = useState<'classic' | 'slim'>('classic');
+  const [busy, setBusy] = useState(false);
+  const [profileRefreshing, setProfileRefreshing] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [pendingRemoval, setPendingRemoval] = useState<'skin' | 'cape' | null>(null);
+
+  async function perform(action: () => Promise<void>): Promise<void> {
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      await action();
+    } catch (reason) {
+      const rawMessage = reason instanceof Error ? reason.message : String(reason);
+      setError(t(rawMessage));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadSkin() {
+    await perform(async () => {
+      const upload = await window.nocturne.uploadWestronSkin(skinModel);
+      if (upload.cancelled) return;
+      onProfileChange(upload.profile ?? null);
+      setMessage(t('Skin Westron hesabınıza yüklendi.'));
+    });
+  }
+
+  async function uploadCape() {
+    await perform(async () => {
+      const upload = await window.nocturne.uploadWestronCape();
+      if (upload.cancelled) return;
+      onProfileChange(upload.profile ?? null);
+      setMessage(t('Pelerin Westron hesabınıza yüklendi.'));
+    });
+  }
+
+  async function refreshProfile() {
+    setProfileRefreshing(true);
+    setError('');
+    try {
+      onProfileChange(await window.nocturne.getWestronProfile());
+      setMessage(t('Westron skin profili güncellendi.'));
+    } catch (reason) {
+      setError(t(reason instanceof Error ? reason.message : String(reason)));
+    } finally {
+      setProfileRefreshing(false);
+    }
+  }
+
+  async function confirmRemoval() {
+    if (!pendingRemoval) return;
+    await perform(async () => {
+      const next = pendingRemoval === 'skin'
+        ? await window.nocturne.deleteWestronSkin()
+        : await window.nocturne.deleteWestronCape();
+      onProfileChange(next);
+      setMessage(t(pendingRemoval === 'skin' ? 'Skin kaldırıldı.' : 'Pelerin kaldırıldı.'));
+      setPendingRemoval(null);
+    });
+  }
+
+  return (
+    <section className="settings-panel skin-appearance-panel">
+      <div className="settings-heading"><div className="card-icon violet"><Image size={18} /></div><div><h3>{t('Skin ve pelerin')}</h3><span>{t('Skin ve pelerinini Westron hesabına yükle.')}</span></div></div>
+      <SkinModelPreview profile={profile} language={language} />
+      <div className="setting-row">
+        <div className="skin-profile-summary">
+          {profile?.skin ? <img className="skin-preview" src={`${profile.skin.url}${profile.skin.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(profile.skin.updatedAt)}`} alt={t('Westron hesabındaki mevcut skin')} /> : <span className="skin-preview skin-preview-empty"><UserRound size={17} /></span>}
+          <span><strong>{t('Westron skin profili')}</strong><small>{profile?.skin ? `${profile.skin.model} ${t('modeli')} · ${new Date(profile.skin.updatedAt).toLocaleDateString(languageLocales[language])}` : t('Henüz skin yüklenmedi. PNG dosyanı yükleyebilirsin.')}</small></span>
+        </div>
+        <div className="account-actions">
+          <select aria-label={t('Skin modeli')} value={skinModel} onChange={(event) => setSkinModel(event.target.value as 'classic' | 'slim')}><option value="classic">Classic</option><option value="slim">Slim</option></select>
+          <button className="button button-secondary button-small" onClick={() => void refreshProfile()} disabled={busy || profileRefreshing}>{profileRefreshing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{t('Yenile')}</button>
+          <button className="button button-secondary button-small" onClick={() => void uploadSkin()} disabled={busy}><Upload size={14} />{t('PNG skin yükle')}</button>
+          {profile?.skin && <button className="button button-secondary button-small" onClick={() => setPendingRemoval('skin')} disabled={busy}><Trash2 size={14} />{t("Skin'i kaldır")}</button>}
+        </div>
+      </div>
+      <div className="setting-row">
+        <div className="skin-profile-summary">
+          {profile?.cape ? <img className="cape-preview" src={`${profile.cape.url}${profile.cape.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(profile.cape.updatedAt)}`} alt={t('Westron hesabındaki mevcut pelerin')} /> : <span className="cape-preview cape-preview-empty"><Image size={17} /></span>}
+          <span><strong>{t('Westron pelerini')}</strong><small>{profile?.cape ? `${t('Güncelleme')}: ${new Date(profile.cape.updatedAt).toLocaleDateString(languageLocales[language])}` : t('Henüz pelerin yüklenmedi. 64×32 PNG dosyası seç.')}</small></span>
+        </div>
+        <div className="account-actions">
+          <button className="button button-secondary button-small" onClick={() => void refreshProfile()} disabled={busy || profileRefreshing}>{profileRefreshing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{t('Yenile')}</button>
+          <button className="button button-secondary button-small" onClick={() => void uploadCape()} disabled={busy}><Upload size={14} />{t('PNG pelerin yükle')}</button>
+          {profile?.cape && <button className="button button-secondary button-small" onClick={() => setPendingRemoval('cape')} disabled={busy}><Trash2 size={14} />{t('Pelerini kaldır')}</button>}
+        </div>
+      </div>
+      {error && <div className="account-message account-error">{error}</div>}
+      {message && <div className="account-message">{message}</div>}
+      {pendingRemoval && <AppearanceRemovalModal appearanceType={pendingRemoval} busy={busy} onCancel={() => setPendingRemoval(null)} onConfirm={() => void confirmRemoval()} />}
+    </section>
+  );
+}
+
 function WestronAccountPanel({
   account,
   profile,
@@ -1581,12 +2030,9 @@ function WestronAccountPanel({
   const [password, setPassword] = useState('');
   const [token, setToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [skinModel, setSkinModel] = useState<'classic' | 'slim'>('classic');
   const [busy, setBusy] = useState(false);
-  const [profileRefreshing, setProfileRefreshing] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [pendingAppearanceRemoval, setPendingAppearanceRemoval] = useState<'skin' | 'cape' | null>(null);
 
   function handleAccountError(reason: unknown, fallbackEmail?: string) {
     const rawMessage = reason instanceof Error ? reason.message : String(reason);
@@ -1656,52 +2102,6 @@ function WestronAccountPanel({
     }
   }
 
-  async function uploadSkin() {
-    const result = await performAccountAction(async () => {
-      const upload = await window.nocturne.uploadWestronSkin(skinModel);
-      if (upload.cancelled) return t('Skin seçimi iptal edildi.');
-      onProfileChange(upload.profile ?? null);
-      return t('Skin Westron hesabınıza yüklendi.');
-    });
-    void result;
-  }
-
-  async function uploadCape() {
-    const result = await performAccountAction(async () => {
-      const upload = await window.nocturne.uploadWestronCape();
-      if (upload.cancelled) return t('Pelerin seçimi iptal edildi.');
-      onProfileChange(upload.profile ?? null);
-      return t('Pelerin Westron hesabınıza yüklendi.');
-    });
-    void result;
-  }
-
-  async function confirmAppearanceRemoval() {
-    if (!pendingAppearanceRemoval) return;
-    const removingSkin = pendingAppearanceRemoval === 'skin';
-    await performAccountAction(async () => {
-      const nextProfile = removingSkin
-        ? await window.nocturne.deleteWestronSkin()
-        : await window.nocturne.deleteWestronCape();
-      onProfileChange(nextProfile);
-      return t(removingSkin ? 'Skin kaldırıldı.' : 'Pelerin kaldırıldı.');
-    });
-    setPendingAppearanceRemoval(null);
-  }
-
-  async function refreshSkinProfile() {
-    setProfileRefreshing(true);
-    setError('');
-    try {
-      onProfileChange(await window.nocturne.getWestronProfile());
-      setMessage(t('Westron skin profili güncellendi.'));
-    } catch (reason) {
-      handleAccountError(reason);
-    } finally {
-      setProfileRefreshing(false);
-    }
-  }
-
   async function logout() {
     await performAccountAction(async () => {
       const result = await window.nocturne.logoutWestronAccount();
@@ -1712,55 +2112,36 @@ function WestronAccountPanel({
   }
 
   return (
-    <section className="settings-panel">
+    <section className="settings-panel account-page-panel">
       <div className="settings-heading">
         <div className="card-icon violet"><UserRound size={18} /></div>
-        <div><h3>{t('Westron hesabı ve görünüm')}</h3><span>{t('Skin ve pelerinini Westron hesabına yükle.')}</span></div>
+        <div><h3>{t('Westron hesabı')}</h3><span>{t('Westron hesap bilgilerini ve giriş ayarlarını yönet.')}</span></div>
       </div>
       {account ? (
-        <>
-          <SkinModelPreview profile={profile} language={language} />
-          <div className="setting-row">
-            <div><strong>{account.username}</strong><span>{account.email} · {account.emailVerified ? t('E-posta doğrulandı') : t('Doğrulanmadı')}</span></div>
-            <button className="button button-secondary button-small" onClick={() => void logout()} disabled={busy}><LogOut size={14} />{t('Çıkış yap')}</button>
+        <div className="account-overview">
+          <div className="account-overview-profile">
+            <div className="account-overview-avatar">
+              <SkinFaceAvatar profile={profile} size="large" fallback={account.username.slice(0, 1).toUpperCase()} />
+            </div>
+            <div className="account-overview-identity">
+              <span className="eyebrow">{t('HESAP ÖZETİ')}</span>
+              <strong>{account.username}</strong>
+              <span>{account.email}</span>
+            </div>
+            <span className={`account-verification ${account.emailVerified ? 'verified' : ''}`}>
+              <Check size={14} />{account.emailVerified ? t('E-posta doğrulandı') : t('Doğrulanmadı')}
+            </span>
           </div>
-          <div className="setting-row">
-            <div className="skin-profile-summary">
-              {profile?.skin
-                ? <img className="skin-preview" src={`${profile.skin.url}${profile.skin.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(profile.skin.updatedAt)}`} alt={t('Westron hesabındaki mevcut skin')} />
-                : <span className="skin-preview skin-preview-empty"><UserRound size={17} /></span>}
-              <span><strong>{t('Westron skin profili')}</strong><small>{profile?.skin ? `${profile.skin.model} ${t('modeli')} · ${new Date(profile.skin.updatedAt).toLocaleDateString(language === 'en' ? 'en-US' : `${language}-${language.toUpperCase()}`)}` : t('Henüz skin yüklenmedi. PNG dosyanı yükleyebilirsin.')}</small></span>
+          <div className="account-overview-footer">
+            <div className="account-security-card">
+              <div className="card-icon green"><ShieldCheck size={17} /></div>
+              <div><strong>{account.emailVerified ? t('Hesabın doğrulandı') : t('E-posta doğrulaması gerekli')}</strong><span>{t('Hesap bilgilerin ve doğrulama durumun burada.')}</span></div>
             </div>
-            <div className="account-actions">
-              <select aria-label={t('Skin modeli')} value={skinModel} onChange={(event) => setSkinModel(event.target.value as 'classic' | 'slim')}>
-                <option value="classic">Classic</option>
-                <option value="slim">Slim</option>
-              </select>
-              <button className="button button-secondary button-small" onClick={() => void refreshSkinProfile()} disabled={busy || profileRefreshing}>
-                {profileRefreshing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
-                {t('Yenile')}
-              </button>
-              <button className="button button-secondary button-small" onClick={() => void uploadSkin()} disabled={busy}><Upload size={14} />{t('PNG skin yükle')}</button>
-              {profile?.skin && <button className="button button-secondary button-small" onClick={() => setPendingAppearanceRemoval('skin')} disabled={busy}><Trash2 size={14} />{t("Skin'i kaldır")}</button>}
-            </div>
+            <button className="button button-secondary" onClick={() => void logout()} disabled={busy}>
+              {busy ? <LoaderCircle className="spin" size={14} /> : <LogOut size={14} />}{t('Çıkış yap')}
+            </button>
           </div>
-          <div className="setting-row">
-            <div className="skin-profile-summary">
-              {profile?.cape
-                ? <img className="cape-preview" src={`${profile.cape.url}${profile.cape.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(profile.cape.updatedAt)}`} alt={t('Westron hesabındaki mevcut pelerin')} />
-                : <span className="cape-preview cape-preview-empty"><Image size={17} /></span>}
-              <span><strong>{t('Westron pelerini')}</strong><small>{profile?.cape ? `${t('Güncelleme')}: ${new Date(profile.cape.updatedAt).toLocaleDateString(language === 'en' ? 'en-US' : `${language}-${language.toUpperCase()}`)}` : t('Henüz pelerin yüklenmedi. 64×32 PNG dosyası seç.')}</small></span>
-            </div>
-            <div className="account-actions">
-              <button className="button button-secondary button-small" onClick={() => void refreshSkinProfile()} disabled={busy || profileRefreshing}>
-                {profileRefreshing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
-                {t('Yenile')}
-              </button>
-              <button className="button button-secondary button-small" onClick={() => void uploadCape()} disabled={busy}><Upload size={14} />{t('PNG pelerin yükle')}</button>
-              {profile?.cape && <button className="button button-secondary button-small" onClick={() => setPendingAppearanceRemoval('cape')} disabled={busy}><Trash2 size={14} />{t('Pelerini kaldır')}</button>}
-            </div>
-          </div>
-        </>
+        </div>
       ) : (
         <>
           <div className="account-tabs">
@@ -1812,17 +2193,8 @@ function WestronAccountPanel({
           )}
         </>
       )}
-      {pendingAppearanceRemoval && (
-        <AppearanceRemovalModal
-          appearanceType={pendingAppearanceRemoval}
-          busy={busy}
-          onCancel={() => setPendingAppearanceRemoval(null)}
-          onConfirm={() => void confirmAppearanceRemoval()}
-        />
-      )}
       {error && <div className="account-message account-error">{error}</div>}
       {message && <div className="account-message">{message}</div>}
-      <div className="settings-note"><ShieldCheck size={16} /><span>{t('Westron skin ve pelerinleri, başka launcher kullanan oyunculara da Westron Fabric modunu kullanmaları halinde görünür; modsuz istemciler özel görünümü alamaz. Diğer oyuncuların Westron profilini bulabilmesi için oyun adınız Westron kullanıcı adınızla aynı olmalıdır. Westron yüklemesi Microsoft hesabınızdaki skin veya pelerini değiştirmez.')}</span></div>
     </section>
   );
 }

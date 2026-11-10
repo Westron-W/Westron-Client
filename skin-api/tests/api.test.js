@@ -8,6 +8,7 @@ import Database from 'better-sqlite3';
 import sharp from 'sharp';
 import { parse as parseYaml } from 'yaml';
 import { buildApp } from '../src/app.js';
+import { migrateDatabase } from '../src/database.js';
 import { hashToken } from '../src/security.js';
 
 let app;
@@ -42,6 +43,32 @@ beforeEach(async () => {
 test('allows enough time for large release uploads to arrive through a slow connection', () => {
   assert.equal(app.server.requestTimeout, 90 * 60 * 1000);
   assert.equal(app.skinDatabase.pragma('user_version', { simple: true }), 4);
+});
+
+test('repairs version 4 databases missing Minecraft username columns', async () => {
+  const database = new Database(':memory:');
+  try {
+    database.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        username TEXT NOT NULL,
+        username_normalized TEXT NOT NULL UNIQUE
+      );
+      INSERT INTO users (id, username, username_normalized)
+      VALUES ('existing-user', 'ExistingUser', 'existinguser');
+      PRAGMA user_version = 4;
+    `);
+
+    await migrateDatabase(database);
+
+    const userColumns = new Set(database.pragma('table_info(users)').map((column) => column.name));
+    assert.equal(userColumns.has('minecraft_username'), true);
+    assert.equal(userColumns.has('minecraft_username_normalized'), true);
+    assert.equal(database.prepare('SELECT username FROM users WHERE id = ?').get('existing-user').username, 'ExistingUser');
+    assert.equal(database.pragma('user_version', { simple: true }), 4);
+  } finally {
+    database.close();
+  }
 });
 
 afterEach(async () => {
@@ -134,6 +161,8 @@ test('health, OpenAPI document and implemented routes are available', async () =
   assert.ok(resendOperation.responses['503']);
   assert.equal(document.paths['/api/v1/auth/resend-verification']?.get, undefined);
   assert.equal(document.paths['/v1/auth/resend-verification'], undefined);
+  assert.equal(document.paths['/api/v1/curseforge/mods/search'], undefined);
+  assert.equal(document.paths['/api/v1/curseforge/mods/{modId}/files'], undefined);
   const compose = parseYaml(await readFile(new URL('../docker-compose.yml', import.meta.url), 'utf8'));
   assert.equal(compose.services['westron-skin-api'].ports, undefined);
   assert.equal(compose.services['westron-skin-api'].environment.HOST, '0.0.0.0');
@@ -171,6 +200,11 @@ test('health, OpenAPI document and implemented routes are available', async () =
     const [documentMethod, documentPath] = route.split(' ');
     assert.ok(document.paths[documentPath]?.[documentMethod.toLowerCase()], `Missing OpenAPI operation ${route}`);
   }
+  const removedRoute = await app.inject({
+    method: 'GET',
+    url: '/api/v1/curseforge/mods/search',
+  });
+  assert.equal(removedRoute.statusCode, 404);
 });
 
 test('links Minecraft names to Westron profiles for public skin and cape lookup', async () => {
@@ -231,7 +265,7 @@ test('only the verified update publisher can upload a hash-matched release feed'
   const otherAccount = await createAccount('RegularUpdater', 'regular@example.test');
   const installer = Buffer.from('test installer payload');
   const hash = createHash('sha512').update(installer).digest('base64');
-  const filename = 'Westron Client Setup 1.0.1.exe';
+  const filename = 'Westron-Client-Setup-1.0.1.exe';
   const manifest = Buffer.from([
     'version: 1.0.1',
     'files:',

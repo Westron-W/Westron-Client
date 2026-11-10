@@ -98,17 +98,17 @@ function validateCredentials(body) {
 
 function isUpdateAssetName(filename) {
   return filename === 'latest.yml'
-    || /^Westron Client Setup (?:\d+\.\d+\.\d+|1\.0)\.exe(?:\.blockmap)?$/.test(filename);
+    || /^(?:Westron-Client-Setup-|Westron Client Setup )(?:\d+\.\d+\.\d+|1\.0)\.exe(?:\.blockmap)?$/.test(filename);
 }
 
 function parseUpdateManifest(buffer) {
   const manifest = buffer.toString('utf8');
   const version = manifest.match(/^version:\s*(\d+\.\d+\.\d+)\s*$/m)?.[1];
-  const fileName = manifest.match(/^  - url:\s*(Westron Client Setup (?:\d+\.\d+\.\d+|1\.0)\.exe)\s*$/m)?.[1];
+  const fileNameMatch = manifest.match(/^  - url:\s*((?:Westron-Client-Setup-|Westron Client Setup )(\d+\.\d+\.\d+|1\.0)\.exe)\s*$/m);
+  const fileName = fileNameMatch?.[1];
+  const fileVersion = fileNameMatch?.[2];
   const sha512 = manifest.match(/^    sha512:\s*([A-Za-z0-9+/=]+)\s*$/m)?.[1];
-  const versionedFileName = version && fileName === `Westron Client Setup ${version}.exe`;
-  const stableProductFileName = version === '1.0.1' && fileName === 'Westron Client Setup 1.0.1.exe';
-  if (!version || !fileName || !sha512 || (!versionedFileName && !stableProductFileName)) {
+  if (!version || !fileName || fileVersion !== version || !sha512) {
     throw new ApiError(400, 'invalid_update_manifest', 'Güncelleme metadata dosyası geçersiz.');
   }
   return { version, fileName, sha512 };

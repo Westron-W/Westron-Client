@@ -26,8 +26,6 @@ export async function migrateDatabase(database) {
     );
   `);
 
-  if (version >= 4) return;
-
   if (version < 2) {
     const userColumns = new Set(database.pragma('table_info(users)').map((column) => column.name));
     const sessionColumns = new Set(database.pragma('table_info(sessions)').map((column) => column.name));

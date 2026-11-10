@@ -11,6 +11,7 @@ const WESTRON_API_PATHS = Object.freeze({
   minecraftProfile: '/api/v1/me/minecraft-profile',
   skin: '/api/v1/me/skin',
   cape: '/api/v1/me/cape',
+  updateAsset: (fileName) => `/api/v1/admin/updates/${encodeURIComponent(fileName)}`,
 });
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
@@ -102,7 +103,7 @@ function createWestronApiClient({
     headers = {},
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
   } = {}) {
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
+    if (timeoutMs !== null && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)) {
       throw new Error('Westron API request timeout must be a positive integer.');
     }
     const requestHeaders = new Headers(headers);
@@ -114,7 +115,7 @@ function createWestronApiClient({
       method,
       headers: requestHeaders,
       body,
-      signal: AbortSignal.timeout(timeoutMs),
+      ...(timeoutMs === null ? {} : { signal: AbortSignal.timeout(timeoutMs) }),
     });
     let result;
     if (response.status !== 204 && response.status !== 304) {
@@ -166,6 +167,7 @@ function createWestronApiClient({
     refresh: (input) => postJson(WESTRON_API_PATHS.refresh, input),
     logout: (accessToken) => request(WESTRON_API_PATHS.logout, { method: 'POST', accessToken }),
     getProfile: (accessToken) => request(WESTRON_API_PATHS.profile, { accessToken }),
+    updateAsset: (fileName, options = {}) => request(WESTRON_API_PATHS.updateAsset(fileName), options),
     setMinecraftProfile: (username, accessToken) => request(WESTRON_API_PATHS.minecraftProfile, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

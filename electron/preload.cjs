@@ -77,4 +77,11 @@ contextBridge.exposeInMainWorld('nocturne', {
   },
   openModsFolder: () => ipcRenderer.invoke('app:open-mods-folder'),
   openContentFolder: (type) => ipcRenderer.invoke('app:open-content-folder', type),
+  openProfilesFolder: () => ipcRenderer.invoke('app:open-profiles-folder'),
+  saveGameBehavior: (behavior) => ipcRenderer.invoke('app:save-game-behavior', behavior),
+  publishUpdate: () => ipcRenderer.invoke('app:publish-update'),
+  listScreenshots: () => ipcRenderer.invoke('app:list-screenshots'),
+  readScreenshot: (fileName) => ipcRenderer.invoke('app:read-screenshot', fileName),
+  deleteScreenshot: (fileName) => ipcRenderer.invoke('app:delete-screenshot', fileName),
+  openScreenshotsFolder: () => ipcRenderer.invoke('app:open-screenshots-folder'),
 });
