@@ -1,0 +1,8 @@
+version: 1.0.2
+files:
+  - url: https://github.com/Westron-W/Westron-Client/releases/download/v1.0.2/Windows-Westron-Client-Setup-1.0.2.exe
+    sha512: 4WBQJxCB+jBn5tFBX8CcY/8Nj8OWpA072hGnD5iHt0zIPUTZwYWZZpok8zpf4KEijlft5OBw1pLFOrvYrYErSg==
+    size: 118351394
+path: Westron-Client-Setup-1.0.2.exe
+sha512: 4WBQJxCB+jBn5tFBX8CcY/8Nj8OWpA072hGnD5iHt0zIPUTZwYWZZpok8zpf4KEijlft5OBw1pLFOrvYrYErSg==
+releaseDate: '2026-11-10T20:03:26.697Z'
