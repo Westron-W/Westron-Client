@@ -36,6 +36,7 @@ test('Windows updater uses a hidden generic feed and releases show only installe
   assert.match(mainCode, /configureUpdateFeed\(autoUpdater, process\.platform\)/);
   assert.match(mainCode, /autoUpdater\.disableDifferentialDownload = true/);
   const releaseWorkflow = fs.readFileSync('.github/workflows/build-release.yml', 'utf8');
+  assert.match(releaseWorkflow, /name: Checkout repository[\s\S]*uses: actions\/checkout@v4/);
   assert.match(releaseWorkflow, /westron-client-update-feed/);
   assert.match(releaseWorkflow, /release\/feed\/latest\.yml/);
   assert.match(releaseWorkflow, /git -C "\$FEED_WORKTREE" push --force origin updates-feed/);
