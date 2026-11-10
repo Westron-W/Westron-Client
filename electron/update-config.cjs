@@ -1,8 +1,6 @@
 const UPDATE_FEED = {
-  provider: 'github',
-  owner: 'Westron-W',
-  repo: 'Westron-Client',
-  releaseType: 'release',
+  provider: 'generic',
+  url: 'https://raw.githubusercontent.com/Westron-W/Westron-Client/updates-feed/',
 };
 
 function configureUpdateFeed(updater, platform) {

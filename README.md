@@ -37,7 +37,7 @@ Uygulama, Fabric modülü ve Windows/macOS paketlerinin sürümü `1.0.2`'dir. W
 
 Sol menüden **Kaynak paketleri**, **Shader paketleri** ve **Mod Paketleri** sayfalarını açıp Minecraft 26.3 ile uyumlu içerikleri arayabilirsin.
 
-Yeni sürüm, `v<version>` etiketi GitHub'a gönderildiğinde Actions tarafından derlenip GitHub Release olarak yayımlanır. Release, Windows `.exe` indirmesini ve otomatik güncelleme için gereken `.exe.blockmap` ile `latest.yml` dosyalarını, ayrıca macOS `.dmg` dosyasını içerir. Güncelleme dosyalarının Skin API'ye ayrıca yüklenmesi gerekmez. Ayrıntılar için [güncelleme yayımlama kılavuzuna](./docs/updates-deployment.md) bakın.
+Yeni sürüm, `v<version>` etiketi GitHub'a gönderildiğinde Actions tarafından derlenip GitHub Release olarak yayımlanır. İndirme bölümünde yalnızca Windows `.exe` ve macOS `.dmg` görünür. Windows güncelleme manifesti GitHub'daki ayrı bir feed branch'inde tutulur; `.blockmap` dosyası yayımlanmaz. Ayrıntılar için [güncelleme yayımlama kılavuzuna](./docs/updates-deployment.md) bakın.
 
 ## Windows derlemesi
 

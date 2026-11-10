@@ -148,6 +148,7 @@ function configureAutoUpdater() {
   configureUpdateFeed(autoUpdater, process.platform);
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.disableDifferentialDownload = true;
   autoUpdater.allowDowngrade = false;
   autoUpdater.on('checking-for-update', () => {
     publishUpdateStatus({ status: 'checking', message: 'Yeni sürüm kontrol ediliyor.' });

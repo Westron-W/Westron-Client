@@ -15,7 +15,7 @@ test('package and lockfile versions are aligned for release metadata', () => {
   assert.match(mainCode, /const RELEASE_VERSION = packageJson\.version;/);
 });
 
-test('Windows updater uses GitHub Releases with all required updater assets', () => {
+test('Windows updater uses a hidden generic feed and releases show only installers', () => {
   assert.ok(packageJson.build.win.target.some
     ? packageJson.build.win.target.some((target) => target === 'nsis')
     : packageJson.build.win.target === 'nsis');
@@ -27,24 +27,31 @@ test('Windows updater uses GitHub Releases with all required updater assets', ()
   let feed;
   assert.equal(configureUpdateFeed({ setFeedURL: (value) => { feed = value; } }, 'win32'), true);
   assert.deepEqual(feed, UPDATE_FEED);
-  assert.deepEqual(feed, packageJson.build.publish[0]);
+  assert.deepEqual(feed, {
+    provider: 'generic',
+    url: 'https://raw.githubusercontent.com/Westron-W/Westron-Client/updates-feed/',
+  });
   assert.equal(configureUpdateFeed({ setFeedURL: () => assert.fail('macOS must not configure the Windows feed') }, 'darwin'), false);
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
   assert.match(mainCode, /configureUpdateFeed\(autoUpdater, process\.platform\)/);
+  assert.match(mainCode, /autoUpdater\.disableDifferentialDownload = true/);
   const releaseWorkflow = fs.readFileSync('.github/workflows/build-release.yml', 'utf8');
-  assert.match(releaseWorkflow, /Westron-Client-Setup-\$\{VERSION\}\.exe\.blockmap/);
-  assert.match(releaseWorkflow, /cp release\/latest\.yml/);
+  assert.match(releaseWorkflow, /westron-client-update-feed/);
+  assert.match(releaseWorkflow, /release\/feed\/latest\.yml/);
+  assert.match(releaseWorkflow, /git -C "\$FEED_WORKTREE" push --force origin updates-feed/);
+  assert.match(releaseWorkflow, /releases\/download\/\$\{RELEASE_TAG\}\/Windows-Westron-Client-Setup-\$\{VERSION\}\.exe/);
   assert.match(releaseWorkflow, /softprops\/action-gh-release/);
-  assert.match(releaseWorkflow, /release\/windows\/Westron-Client-Setup-\*\.exe\.blockmap/);
-  assert.match(releaseWorkflow, /release\/windows\/latest\.yml/);
+  assert.match(releaseWorkflow, /release\/windows\/Windows-Westron-Client-Setup-\*\.exe/);
+  assert.match(releaseWorkflow, /ASSET in[\s\S]*Westron-Client-Setup-\$\{VERSION\}\.exe\.blockmap/);
   assert.match(releaseWorkflow, /release\/macos\/MacOS-Westron-Client-\*\.dmg/);
-  assert.match(releaseWorkflow, /GitHub Release is missing or has unexpected updater\/download assets/);
+  assert.match(releaseWorkflow, /GitHub Release must contain only the Windows EXE and macOS DMG/);
   assert.match(releaseWorkflow, /release_tag:/);
   assert.match(releaseWorkflow, /startsWith\(github\.event\.head_commit\.message, '\[publish-release\]'\)/);
   assert.match(releaseWorkflow, /Verify published installer assets/);
   assert.match(releaseWorkflow, /gh release view "\$RELEASE_TAG"/);
   assert.match(releaseWorkflow, /gh release delete-asset/);
-  assert.match(releaseWorkflow, /Windows-Westron-Client-Setup-\$\{VERSION\}\.exe/);
+  assert.doesNotMatch(releaseWorkflow, /release\/windows\/Westron-Client-Setup-\*\.exe\.blockmap/);
+  assert.doesNotMatch(releaseWorkflow, /release\/windows\/latest\.yml/);
   assert.match(packageJson.dependencies['electron-updater'], /^\^/);
   assert.equal(packageJson.build.win.icon, 'build/westron-client.ico');
   assert.equal(packageJson.build.nsis.installerIcon, 'build/westron-client.ico');

@@ -46,16 +46,23 @@ jobs:
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          mkdir -p release/gh-assets
-          cp "release/Westron-Client-Setup-${VERSION}.exe" "release/gh-assets/Westron-Client-Setup-${VERSION}.exe"
-          cp "release/Westron-Client-Setup-${VERSION}.exe.blockmap" "release/gh-assets/Westron-Client-Setup-${VERSION}.exe.blockmap"
-          cp release/latest.yml release/gh-assets/latest.yml
+          mkdir -p release/gh-assets release/update-feed
+          cp "release/Westron-Client-Setup-${VERSION}.exe" "release/gh-assets/Windows-Westron-Client-Setup-${VERSION}.exe"
+          sed "s|^  - url: .*|  - url: https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/Windows-Westron-Client-Setup-${VERSION}.exe|" \
+            release/latest.yml > release/update-feed/latest.yml
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: westron-client-windows
           path: release/gh-assets/*
+          if-no-files-found: error
+
+      - name: Upload Windows update feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: westron-client-update-feed
+          path: release/update-feed/latest.yml
           if-no-files-found: error
 
   build-macos:
@@ -122,6 +129,12 @@ jobs:
           name: westron-client-windows
           path: release/windows
 
+      - name: Download Windows update feed
+        uses: actions/download-artifact@v4
+        with:
+          name: westron-client-update-feed
+          path: release/feed
+
       - name: Download macOS DMG
         uses: actions/download-artifact@v4
         with:
@@ -132,7 +145,7 @@ jobs:
         env:
           REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
-          VERSION=$(sed -n 's/^version: //p' release/windows/latest.yml)
+          VERSION=$(sed -n 's/^version: //p' release/feed/latest.yml)
           if [ -n "$REQUESTED_RELEASE_TAG" ]; then
             RELEASE_TAG="$REQUESTED_RELEASE_TAG"
           elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
@@ -145,12 +158,11 @@ jobs:
             exit 1
           fi
           echo "RELEASE_TAG=${RELEASE_TAG}" >> "$GITHUB_ENV"
-          test -f "release/windows/Westron-Client-Setup-${VERSION}.exe" || (echo "::error::Missing Windows updater installer" && exit 1)
-          test -f "release/windows/Westron-Client-Setup-${VERSION}.exe.blockmap" || (echo "::error::Missing Windows updater blockmap" && exit 1)
-          test -f "release/windows/latest.yml" || (echo "::error::Missing Windows updater manifest" && exit 1)
+          test -f "release/windows/Windows-Westron-Client-Setup-${VERSION}.exe" || (echo "::error::Missing Windows download installer" && exit 1)
+          test -f "release/feed/latest.yml" || (echo "::error::Missing Windows updater manifest" && exit 1)
           test -f "release/macos/MacOS-Westron-Client-${VERSION}.dmg" || (echo "::error::Missing macOS download asset" && exit 1)
-          grep -qx "version: ${VERSION}" release/windows/latest.yml || (echo "::error::Manifest version does not match release tag" && exit 1)
-          grep -qx "  - url: Westron-Client-Setup-${VERSION}.exe" release/windows/latest.yml || (echo "::error::Manifest does not point to the published Windows installer" && exit 1)
+          grep -qx "version: ${VERSION}" release/feed/latest.yml || (echo "::error::Manifest version does not match release tag" && exit 1)
+          grep -qx "  - url: https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/Windows-Westron-Client-Setup-${VERSION}.exe" release/feed/latest.yml || (echo "::error::Manifest does not point to the published Windows installer" && exit 1)
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -161,21 +173,39 @@ jobs:
           overwrite_files: true
           make_latest: true
           files: |
-            release/windows/Westron-Client-Setup-*.exe
-            release/windows/Westron-Client-Setup-*.exe.blockmap
-            release/windows/latest.yml
+            release/windows/Windows-Westron-Client-Setup-*.exe
             release/macos/MacOS-Westron-Client-*.dmg
 
-      - name: Remove legacy Windows download asset
+      - name: Publish hidden Windows update feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FEED_WORKTREE="${RUNNER_TEMP}/westron-updates-feed"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git worktree add --detach "$FEED_WORKTREE" "$GITHUB_SHA"
+          git -C "$FEED_WORKTREE" switch --orphan updates-feed
+          git -C "$FEED_WORKTREE" rm -rf --ignore-unmatch .
+          git -C "$FEED_WORKTREE" clean -fdx
+          cp release/feed/latest.yml "$FEED_WORKTREE/latest.yml"
+          git -C "$FEED_WORKTREE" add latest.yml
+          git -C "$FEED_WORKTREE" commit -m "Update Windows feed for ${{ env.RELEASE_TAG }}"
+          git -C "$FEED_WORKTREE" push --force origin updates-feed
+
+      - name: Remove legacy updater assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           RELEASE_TAG="${{ env.RELEASE_TAG }}"
           VERSION="${RELEASE_TAG#v}"
-          LEGACY_ASSET="Windows-Westron-Client-Setup-${VERSION}.exe"
-          if gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq "$LEGACY_ASSET"; then
-            gh release delete-asset "$RELEASE_TAG" "$LEGACY_ASSET" --repo "${GITHUB_REPOSITORY}" --yes
-          fi
+          for ASSET in \
+            "Westron-Client-Setup-${VERSION}.exe" \
+            "Westron-Client-Setup-${VERSION}.exe.blockmap" \
+            "latest.yml"; do
+            if gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq "$ASSET"; then
+              gh release delete-asset "$RELEASE_TAG" "$ASSET" --repo "${GITHUB_REPOSITORY}" --yes
+            fi
+          done
 
       - name: Verify published installer assets
         env:
@@ -185,13 +215,11 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           ASSETS=$(gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
           EXPECTED_ASSETS=$(printf '%s\n' \
-            "Westron-Client-Setup-${VERSION}.exe" \
-            "Westron-Client-Setup-${VERSION}.exe.blockmap" \
-            "latest.yml" \
+            "Windows-Westron-Client-Setup-${VERSION}.exe" \
             "MacOS-Westron-Client-${VERSION}.dmg" | sort)
           ACTUAL_ASSETS=$(printf '%s\n' "$ASSETS" | sort)
           if [ "$ACTUAL_ASSETS" != "$EXPECTED_ASSETS" ]; then
-            echo "::error::GitHub Release is missing or has unexpected updater/download assets"
+            echo "::error::GitHub Release must contain only the Windows EXE and macOS DMG"
             printf 'Expected:\n%s\nActual:\n%s\n' "$EXPECTED_ASSETS" "$ACTUAL_ASSETS"
             exit 1
           fi
