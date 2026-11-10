@@ -1,6 +1,6 @@
 {
   "name": "westron-client",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "author": "Westron Client",
@@ -42,7 +42,7 @@
   "build": {
     "appId": "com.westron.client",
     "productName": "Westron Client",
-    "buildVersion": "1.0.2.1",
+    "buildVersion": "1.0.3.1",
     "directories": {
       "output": "release"
     },
@@ -59,15 +59,15 @@
         "releaseType": "release"
       }
     ],
-    "artifactName": "Westron-Client-Setup-1.0.2.exe",
+    "artifactName": "Westron-Client-Setup-1.0.3.exe",
     "extraResources": [
       {
         "from": "build/westron-client.ico",
         "to": "westron-client.ico"
       },
       {
-        "from": "fabric-mod/build/libs/westron-client-skin-1.0.2.jar",
-        "to": "westron-client-skin-1.0.2.jar"
+        "from": "fabric-mod/build/libs/westron-client-skin-1.0.3.jar",
+        "to": "westron-client-skin-1.0.3.jar"
       }
     ],
     "win": {

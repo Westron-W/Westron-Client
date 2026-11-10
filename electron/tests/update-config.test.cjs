@@ -3,11 +3,11 @@ const assert = require('node:assert/strict');
 const packageJson = require('../../package.json');
 const lockfile = require('../../package-lock.json');
 const macBuild = require('../../macos-client/electron-builder.json');
-const { UPDATE_FEED_URL, configureUpdateFeed } = require('../update-config.cjs');
+const { UPDATE_FEED, configureUpdateFeed } = require('../update-config.cjs');
 const fs = require('node:fs');
 
 test('package and lockfile versions are aligned for release metadata', () => {
-  assert.equal(packageJson.version, '1.0.2');
+  assert.equal(packageJson.version, '1.0.3');
   assert.equal(packageJson.version, lockfile.version);
   assert.equal(packageJson.version, lockfile.packages[''].version);
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
@@ -15,7 +15,7 @@ test('package and lockfile versions are aligned for release metadata', () => {
   assert.match(mainCode, /const RELEASE_VERSION = packageJson\.version;/);
 });
 
-test('Windows updater uses the Skin API feed while builds publish GitHub Releases', () => {
+test('Windows updater uses GitHub Releases with all required updater assets', () => {
   assert.ok(packageJson.build.win.target.some
     ? packageJson.build.win.target.some((target) => target === 'nsis')
     : packageJson.build.win.target === 'nsis');
@@ -26,8 +26,8 @@ test('Windows updater uses the Skin API feed while builds publish GitHub Release
     && provider.releaseType === 'release'));
   let feed;
   assert.equal(configureUpdateFeed({ setFeedURL: (value) => { feed = value; } }, 'win32'), true);
-  assert.deepEqual(feed, { provider: 'generic', url: UPDATE_FEED_URL });
-  assert.equal(UPDATE_FEED_URL, 'https://westronskin.sytes.net/updates/');
+  assert.deepEqual(feed, UPDATE_FEED);
+  assert.deepEqual(feed, packageJson.build.publish[0]);
   assert.equal(configureUpdateFeed({ setFeedURL: () => assert.fail('macOS must not configure the Windows feed') }, 'darwin'), false);
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
   assert.match(mainCode, /configureUpdateFeed\(autoUpdater, process\.platform\)/);
@@ -35,9 +35,10 @@ test('Windows updater uses the Skin API feed while builds publish GitHub Release
   assert.match(releaseWorkflow, /Westron-Client-Setup-\$\{VERSION\}\.exe\.blockmap/);
   assert.match(releaseWorkflow, /cp release\/latest\.yml/);
   assert.match(releaseWorkflow, /softprops\/action-gh-release/);
-  assert.match(releaseWorkflow, /release\/windows\/Windows-Westron-Client-Setup-\*\.exe/);
+  assert.match(releaseWorkflow, /release\/windows\/Westron-Client-Setup-\*\.exe\.blockmap/);
+  assert.match(releaseWorkflow, /release\/windows\/latest\.yml/);
   assert.match(releaseWorkflow, /release\/macos\/MacOS-Westron-Client-\*\.dmg/);
-  assert.match(releaseWorkflow, /GitHub Release must contain only the Windows EXE and macOS DMG/);
+  assert.match(releaseWorkflow, /GitHub Release is missing or has unexpected updater\/download assets/);
   assert.match(releaseWorkflow, /release_tag:/);
   assert.match(releaseWorkflow, /startsWith\(github\.event\.head_commit\.message, '\[publish-release\]'\)/);
   assert.match(releaseWorkflow, /Verify published installer assets/);
@@ -77,7 +78,7 @@ test('macOS packages have isolated output and include the shared Fabric client m
   assert.ok(packageJson.build.files.includes('electron/**/*'));
   assert.equal(macBuild.extraResources[0].to, `westron-client-skin-${packageJson.version}.jar`);
   assert.equal(packageJson.scripts['package:macos'].includes('macos-client/electron-builder.json'), true);
-  assert.equal(packageJson.version, '1.0.2');
+  assert.equal(packageJson.version, '1.0.3');
   const gradleProperties = fs.readFileSync('fabric-mod/gradle.properties', 'utf8');
   assert.match(gradleProperties, new RegExp(`^mod_version=${packageJson.version.replaceAll('.', '\\.')}$`, 'm'));
   assert.equal(packageJson.build.extraResources[1].to, `westron-client-skin-${packageJson.version}.jar`);

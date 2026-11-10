@@ -50,7 +50,6 @@ jobs:
           cp "release/Westron-Client-Setup-${VERSION}.exe" "release/gh-assets/Westron-Client-Setup-${VERSION}.exe"
           cp "release/Westron-Client-Setup-${VERSION}.exe.blockmap" "release/gh-assets/Westron-Client-Setup-${VERSION}.exe.blockmap"
           cp release/latest.yml release/gh-assets/latest.yml
-          cp "release/Westron-Client-Setup-${VERSION}.exe" "release/gh-assets/Windows-Westron-Client-Setup-${VERSION}.exe"
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -149,9 +148,9 @@ jobs:
           test -f "release/windows/Westron-Client-Setup-${VERSION}.exe" || (echo "::error::Missing Windows updater installer" && exit 1)
           test -f "release/windows/Westron-Client-Setup-${VERSION}.exe.blockmap" || (echo "::error::Missing Windows updater blockmap" && exit 1)
           test -f "release/windows/latest.yml" || (echo "::error::Missing Windows updater manifest" && exit 1)
-          test -f "release/windows/Windows-Westron-Client-Setup-${VERSION}.exe" || (echo "::error::Missing Windows download asset" && exit 1)
           test -f "release/macos/MacOS-Westron-Client-${VERSION}.dmg" || (echo "::error::Missing macOS download asset" && exit 1)
           grep -qx "version: ${VERSION}" release/windows/latest.yml || (echo "::error::Manifest version does not match release tag" && exit 1)
+          grep -qx "  - url: Westron-Client-Setup-${VERSION}.exe" release/windows/latest.yml || (echo "::error::Manifest does not point to the published Windows installer" && exit 1)
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -162,7 +161,9 @@ jobs:
           overwrite_files: true
           make_latest: true
           files: |
-            release/windows/Windows-Westron-Client-Setup-*.exe
+            release/windows/Westron-Client-Setup-*.exe
+            release/windows/Westron-Client-Setup-*.exe.blockmap
+            release/windows/latest.yml
             release/macos/MacOS-Westron-Client-*.dmg
 
       - name: Verify published installer assets
@@ -173,11 +174,13 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           ASSETS=$(gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
           EXPECTED_ASSETS=$(printf '%s\n' \
-            "Windows-Westron-Client-Setup-${VERSION}.exe" \
+            "Westron-Client-Setup-${VERSION}.exe" \
+            "Westron-Client-Setup-${VERSION}.exe.blockmap" \
+            "latest.yml" \
             "MacOS-Westron-Client-${VERSION}.dmg" | sort)
           ACTUAL_ASSETS=$(printf '%s\n' "$ASSETS" | sort)
           if [ "$ACTUAL_ASSETS" != "$EXPECTED_ASSETS" ]; then
-            echo "::error::GitHub Release must contain only the Windows EXE and macOS DMG"
+            echo "::error::GitHub Release is missing or has unexpected updater/download assets"
             printf 'Expected:\n%s\nActual:\n%s\n' "$EXPECTED_ASSETS" "$ACTUAL_ASSETS"
             exit 1
           fi
