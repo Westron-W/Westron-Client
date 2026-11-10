@@ -27,11 +27,11 @@ Fabric kurulumu tamamlanınca Westron Client modu da `mods` klasörüne eklenir.
 
 ## Westron Skin API
 
-Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi backend'i [`skin-api/`](./skin-api/) dizinindedir. Kurulum, Docker/Nginx Proxy Manager ayarları, API endpoint'leri ve test komutları için [skin-api/README.md](./skin-api/README.md) dosyasına bakın. Fabric istemci modülü Westron skin ve pelerinlerini ve mevcut herkese açık Minecraft görünümlerini istemci tarafında yükler; PNG'leri HTTPS üzerinden alıp yerel önbelleğe alır. Başka launcher kullanan oyuncular `npm run build:mod` komutuyla oluşturulan `fabric-mod/build/libs/westron-client-skin-1.0.3.jar` dosyasını uyumlu Fabric profilinin `mods` klasörüne ekleyebilir. Modsuz istemciler özel görünümleri göremez; Westron profilinin otomatik bulunması için oyun adı Westron kullanıcı adıyla aynı olmalıdır.
+Microsoft/Minecraft Launcher kimlik doğrulamasından bağımsız skin servisi backend'i [`skin-api/`](./skin-api/) dizinindedir. Kurulum, Docker/Nginx Proxy Manager ayarları, API endpoint'leri ve test komutları için [skin-api/README.md](./skin-api/README.md) dosyasına bakın. Fabric istemci modülü Westron skin ve pelerinlerini ve mevcut herkese açık Minecraft görünümlerini istemci tarafında yükler; PNG'leri HTTPS üzerinden alıp yerel önbelleğe alır. Başka launcher kullanan oyuncular `npm run build:mod` komutuyla oluşturulan `fabric-mod/build/libs/westron-client-skin-1.0.2.jar` dosyasını uyumlu Fabric profilinin `mods` klasörüne ekleyebilir. Modsuz istemciler özel görünümleri göremez; Westron profilinin otomatik bulunması için oyun adı Westron kullanıcı adıyla aynı olmalıdır.
 
 ## Sürüm numaraları
 
-Uygulama, Fabric modülü ve Windows/macOS paketlerinin sürümü `1.0.3`'tür. Windows kurulum dosyası `release/Westron-Client-Setup-1.0.3.exe` adını alır. Windows güncellemeleri GitHub Releases üzerinden denetlenir.
+Uygulama, Fabric modülü ve Windows/macOS paketlerinin sürümü `1.0.2`'dir. Windows kurulum dosyası `release/Westron-Client-Setup-1.0.2.exe` adını alır. Windows güncellemeleri GitHub Releases üzerinden denetlenir.
 
 ## Modrinth paketleri
 

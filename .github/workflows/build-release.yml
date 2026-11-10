@@ -166,6 +166,17 @@ jobs:
             release/windows/latest.yml
             release/macos/MacOS-Westron-Client-*.dmg
 
+      - name: Remove legacy Windows download asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RELEASE_TAG="${{ env.RELEASE_TAG }}"
+          VERSION="${RELEASE_TAG#v}"
+          LEGACY_ASSET="Windows-Westron-Client-Setup-${VERSION}.exe"
+          if gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' | grep -Fxq "$LEGACY_ASSET"; then
+            gh release delete-asset "$RELEASE_TAG" "$LEGACY_ASSET" --repo "${GITHUB_REPOSITORY}" --yes
+          fi
+
       - name: Verify published installer assets
         env:
           GH_TOKEN: ${{ github.token }}

@@ -7,7 +7,7 @@ const { UPDATE_FEED, configureUpdateFeed } = require('../update-config.cjs');
 const fs = require('node:fs');
 
 test('package and lockfile versions are aligned for release metadata', () => {
-  assert.equal(packageJson.version, '1.0.3');
+  assert.equal(packageJson.version, '1.0.2');
   assert.equal(packageJson.version, lockfile.version);
   assert.equal(packageJson.version, lockfile.packages[''].version);
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
@@ -43,7 +43,8 @@ test('Windows updater uses GitHub Releases with all required updater assets', ()
   assert.match(releaseWorkflow, /startsWith\(github\.event\.head_commit\.message, '\[publish-release\]'\)/);
   assert.match(releaseWorkflow, /Verify published installer assets/);
   assert.match(releaseWorkflow, /gh release view "\$RELEASE_TAG"/);
-  assert.doesNotMatch(releaseWorkflow, /gh release delete/);
+  assert.match(releaseWorkflow, /gh release delete-asset/);
+  assert.match(releaseWorkflow, /Windows-Westron-Client-Setup-\$\{VERSION\}\.exe/);
   assert.match(packageJson.dependencies['electron-updater'], /^\^/);
   assert.equal(packageJson.build.win.icon, 'build/westron-client.ico');
   assert.equal(packageJson.build.nsis.installerIcon, 'build/westron-client.ico');
@@ -78,7 +79,7 @@ test('macOS packages have isolated output and include the shared Fabric client m
   assert.ok(packageJson.build.files.includes('electron/**/*'));
   assert.equal(macBuild.extraResources[0].to, `westron-client-skin-${packageJson.version}.jar`);
   assert.equal(packageJson.scripts['package:macos'].includes('macos-client/electron-builder.json'), true);
-  assert.equal(packageJson.version, '1.0.3');
+  assert.equal(packageJson.version, '1.0.2');
   const gradleProperties = fs.readFileSync('fabric-mod/gradle.properties', 'utf8');
   assert.match(gradleProperties, new RegExp(`^mod_version=${packageJson.version.replaceAll('.', '\\.')}$`, 'm'));
   assert.equal(packageJson.build.extraResources[1].to, `westron-client-skin-${packageJson.version}.jar`);
