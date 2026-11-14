@@ -47,5 +47,6 @@ Windows Sorunsuz Şekilde Çalışır Uygun .exe Dosyasını İndirip Kullanmaya
 
 MacOs Sorunsuz Şekilde Çalışır Uygun .dmg Dosyasını İndirip Kullanmaya Başlayabilirsiniz
 
-## Westron Client genel bakış:
-<img width="1755" height="1077" alt="image" src="https://github.com/user-attachments/assets/732f0d3a-cbaf-4411-9129-7d6b01fdf318" />
+## Westron Client genel bakış: (1.0.2)
+<img width="1755" height="1077" alt="image" src="https://github.com/user-attachments/assets/31ef8bcb-5cbf-47b6-8cbf-b2df2cfbf5ca" />
+
