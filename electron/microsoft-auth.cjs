@@ -143,7 +143,7 @@ function createMicrosoftAuthService({
       const session = await kit.auth.authorizationCode.run({
         clientId,
         signal: controller.signal,
-        successHtml: '<!doctype html><meta charset="utf-8"><title>Westron Client</title><style>body{background:#0b0d11;color:#e8eaf0;font:16px Segoe UI,sans-serif;display:grid;place-items:center;height:90vh}main{text-align:center}h1{color:#c1b2ff}</style><main><h1>Westron Client</h1><p>Microsoft girişi tamamlandı. Bu pencereyi kapatıp launcher’a dönebilirsiniz.</p></main>',
+        successHtml: '<!doctype html><meta charset="utf-8"><title>Westron Launcher</title><style>body{background:#0b0d11;color:#e8eaf0;font:16px Segoe UI,sans-serif;display:grid;place-items:center;height:90vh}main{text-align:center}h1{color:#c1b2ff}</style><main><h1>Westron Launcher</h1><p>Microsoft girişi tamamlandı. Bu pencereyi kapatıp launcher’a dönebilirsiniz.</p></main>',
         onOpenBrowser: async (url) => {
           const safeUrl = validateMicrosoftAuthorizationUrl(url);
           try {

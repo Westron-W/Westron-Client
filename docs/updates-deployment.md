@@ -1,4 +1,4 @@
-# Westron Client updates
+﻿# Westron Launcher updates
 
 The packaged Windows NSIS installer uses `electron-updater` with a generic
 feed served from the public `updates-feed` branch. The launcher only checks

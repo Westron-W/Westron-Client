@@ -47,7 +47,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class WestronSkinManager {
-    private static final Logger LOGGER = LoggerFactory.getLogger("Westron Client Skins");
+    private static final Logger LOGGER = LoggerFactory.getLogger("Westron Launcher Skins");
     private static final URI API_ORIGIN = URI.create("https://westronskin.sytes.net");
     private static final URI MOJANG_API_ORIGIN = URI.create("https://api.mojang.com");
     private static final URI MOJANG_SESSION_ORIGIN = URI.create("https://sessionserver.mojang.com");

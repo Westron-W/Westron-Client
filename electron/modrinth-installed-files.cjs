@@ -21,6 +21,14 @@ function validateInstallIndex(index, extension) {
   return index;
 }
 
+function addProjectIdsToFiles(files, installIndex) {
+  const projectIdsByFile = new Map(Object.entries(installIndex).map(([projectId, fileName]) => [fileName, projectId]));
+  return files.map((file) => {
+    const projectId = projectIdsByFile.get(file.name);
+    return projectId ? { ...file, projectId } : file;
+  });
+}
+
 async function readInstallIndex(directory, extension) {
   let contents;
   try {
@@ -81,8 +89,27 @@ async function removeInstalledFile(directory, extension, fileName) {
   await writeInstallIndex(directory, extension, nextIndex);
 }
 
+async function removeInstalledProject(directory, extension, projectId, expectedFileName) {
+  if (typeof projectId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(projectId)) {
+    throw new Error('Geçersiz Modrinth proje kimliği.');
+  }
+  const index = await readInstallIndex(directory, extension);
+  const fileName = index[projectId];
+  if (!fileName || (expectedFileName && fileName !== expectedFileName)) return false;
+
+  const nextIndex = { ...index };
+  delete nextIndex[projectId];
+  await writeInstallIndex(directory, extension, nextIndex);
+  if (!Object.values(nextIndex).includes(fileName)) {
+    await fs.rm(path.join(directory, fileName), { force: true });
+  }
+  return true;
+}
+
 module.exports = {
+  addProjectIdsToFiles,
   persistInstalledFiles,
   readInstallIndex,
   removeInstalledFile,
+  removeInstalledProject,
 };

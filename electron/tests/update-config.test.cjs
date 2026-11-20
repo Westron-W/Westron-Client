@@ -7,15 +7,22 @@ const { UPDATE_FEED, configureUpdateFeed } = require('../update-config.cjs');
 const fs = require('node:fs');
 
 test('package and lockfile versions are aligned for release metadata', () => {
-  assert.equal(packageJson.version, '1.0.2');
+  assert.equal(packageJson.version, '1.0.3');
   assert.equal(packageJson.version, lockfile.version);
   assert.equal(packageJson.version, lockfile.packages[''].version);
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
   assert.match(mainCode, /const DISPLAY_VERSION = packageJson\.version;/);
   assert.match(mainCode, /const RELEASE_VERSION = packageJson\.version;/);
+  assert.match(mainCode, /process\.platform === 'win32'/);
+  assert.match(mainCode, /process\.env\.APPDATA/);
+  assert.match(mainCode, /resolveDefaultMinecraftDir\(appDataDirectory, process\.platform\)/);
+  assert.match(mainCode, /path\.join\(targetMinecraftDir, 'westron-profiles'\)/);
+  assert.match(mainCode, /migrateLegacyMinecraftProfiles\(legacyDirectory, targetMinecraftDir\)/);
+  assert.match(mainCode, /minecraftDir: process\.platform === 'win32'/);
 });
 
 test('Windows updater uses a hidden generic feed and releases show only installers', () => {
+  assert.equal(packageJson.build.nsis.include, 'build/installer.nsh');
   assert.ok(packageJson.build.win.target.some
     ? packageJson.build.win.target.some((target) => target === 'nsis')
     : packageJson.build.win.target === 'nsis');
@@ -40,31 +47,56 @@ test('Windows updater uses a hidden generic feed and releases show only installe
   assert.match(releaseWorkflow, /westron-client-update-feed/);
   assert.match(releaseWorkflow, /release\/feed\/latest\.yml/);
   assert.match(releaseWorkflow, /git -C "\$FEED_WORKTREE" push --force origin updates-feed/);
-  assert.match(releaseWorkflow, /releases\/download\/\$\{RELEASE_TAG\}\/Windows-Westron-Client-Setup-\$\{VERSION\}\.exe/);
+  assert.match(releaseWorkflow, /releases\/download\/\$\{RELEASE_TAG\}\/Windows-Westron-Launcher-Setup-\$\{VERSION\}\.exe/);
   assert.match(releaseWorkflow, /softprops\/action-gh-release/);
-  assert.match(releaseWorkflow, /release\/windows\/Windows-Westron-Client-Setup-\*\.exe/);
-  assert.match(releaseWorkflow, /ASSET in[\s\S]*Westron-Client-Setup-\$\{VERSION\}\.exe\.blockmap/);
-  assert.match(releaseWorkflow, /release\/macos\/MacOS-Westron-Client-\*\.dmg/);
+  assert.match(releaseWorkflow, /release\/windows\/Windows-Westron-Launcher-Setup-\*\.exe/);
+  assert.match(releaseWorkflow, /ASSET in[\s\S]*Westron-Launcher-Setup-\$\{VERSION\}\.exe\.blockmap/);
+  assert.match(releaseWorkflow, /release\/macos\/MacOS-Westron-Launcher-\*\.dmg/);
   assert.match(releaseWorkflow, /GitHub Release must contain only the Windows EXE and macOS DMG/);
   assert.match(releaseWorkflow, /release_tag:/);
   assert.match(releaseWorkflow, /startsWith\(github\.event\.head_commit\.message, '\[publish-release\]'\)/);
   assert.match(releaseWorkflow, /Verify published installer assets/);
   assert.match(releaseWorkflow, /gh release view "\$RELEASE_TAG"/);
   assert.match(releaseWorkflow, /gh release delete-asset/);
-  assert.doesNotMatch(releaseWorkflow, /release\/windows\/Westron-Client-Setup-\*\.exe\.blockmap/);
+  assert.doesNotMatch(releaseWorkflow, /release\/windows\/Westron-Launcher-Setup-\*\.exe\.blockmap/);
   assert.doesNotMatch(releaseWorkflow, /release\/windows\/latest\.yml/);
   assert.match(packageJson.dependencies['electron-updater'], /^\^/);
-  assert.equal(packageJson.build.win.icon, 'build/westron-client.ico');
-  assert.equal(packageJson.build.nsis.installerIcon, 'build/westron-client.ico');
-  assert.equal(packageJson.build.nsis.uninstallerIcon, 'build/westron-client.ico');
-  assert.equal(packageJson.build.artifactName, `Westron-Client-Setup-${packageJson.version}.exe`);
+  assert.equal(packageJson.build.win.icon, 'build/westron-launcher.ico');
+  assert.equal(packageJson.build.nsis.installerIcon, 'build/westron-launcher.ico');
+  assert.equal(packageJson.build.nsis.uninstallerIcon, 'build/westron-launcher.ico');
+  assert.deepEqual(packageJson.build.extraResources[0], {
+    from: 'build/westron-launcher.ico',
+    to: 'westron-launcher.ico',
+  });
+  assert.equal(fs.existsSync('build/westron-launcher.ico'), true);
+  assert.equal(packageJson.build.artifactName, `Westron-Launcher-Setup-${packageJson.version}.exe`);
   assert.equal(packageJson.build.nsis.installerSidebar, 'build/installer-sidebar.bmp');
   assert.equal(packageJson.build.nsis.uninstallerSidebar, 'build/installer-sidebar.bmp');
   assert.equal(packageJson.build.nsis.installerHeader, 'build/installer-header.bmp');
   assert.equal(fs.existsSync(packageJson.build.nsis.installerSidebar), true);
   assert.equal(fs.existsSync(packageJson.build.nsis.installerHeader), true);
-  assert.equal(packageJson.build.nsis.include, undefined);
-  assert.equal(fs.existsSync('electron/installer.nsh'), false);
+  const installerScript = fs.readFileSync(packageJson.build.nsis.include, 'utf8');
+  assert.equal(fs.existsSync(packageJson.build.nsis.include), true);
+  assert.match(installerScript, /!macro customWelcomePage/);
+  assert.match(installerScript, /WESTRON_WELCOME_TITLE 1055/);
+  assert.match(installerScript, /WESTRON_WELCOME_TITLE 1033/);
+  assert.match(installerScript, /MUI_WELCOMEPAGE_TITLE_3LINES/);
+  assert.match(installerScript, /Hoş Geldiniz!/);
+  assert.match(installerScript, /Bu yükleyici Westron Launcher'ı/);
+  assert.match(installerScript, /MUI_BGCOLOR "241A3A"/);
+
+  const appCode = fs.readFileSync('src/App.tsx', 'utf8');
+  assert.match(appCode, /className="window-controls"/);
+  assert.match(appCode, /className="topbar-right"/);
+  assert.match(appCode, /label={text\('Westron Launcher Modu'\)}/);
+  assert.match(appCode, /function PerformanceModesPage/);
+  const launcherMainCode = fs.readFileSync('electron/main.cjs', 'utf8');
+  assert.match(launcherMainCode, /ipcMain\.handle\('app:install-performance-preset'/);
+  assert.match(appCode, /<p>\{status\.message \? t\(status\.message\) : ''\}<\/p>/);
+
+  const appStyles = fs.readFileSync('src/styles.css', 'utf8');
+  assert.match(appStyles, /\.topbar-right \{ position: absolute;/);
+  assert.match(appStyles, /\.window-controls \{ position: fixed;/);
 });
 
 test('macOS packages have isolated output and include the shared Fabric client mod', () => {
@@ -87,7 +119,7 @@ test('macOS packages have isolated output and include the shared Fabric client m
   assert.ok(packageJson.build.files.includes('electron/**/*'));
   assert.equal(macBuild.extraResources[0].to, `westron-client-skin-${packageJson.version}.jar`);
   assert.equal(packageJson.scripts['package:macos'].includes('macos-client/electron-builder.json'), true);
-  assert.equal(packageJson.version, '1.0.2');
+  assert.equal(packageJson.version, '1.0.3');
   const gradleProperties = fs.readFileSync('fabric-mod/gradle.properties', 'utf8');
   assert.match(gradleProperties, new RegExp(`^mod_version=${packageJson.version.replaceAll('.', '\\.')}$`, 'm'));
   assert.equal(packageJson.build.extraResources[1].to, `westron-client-skin-${packageJson.version}.jar`);
@@ -101,6 +133,6 @@ test('macOS build maintains parity with Windows features and resources', () => {
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
   assert.match(mainCode, /function setupApplicationMenu\(\)/);
   assert.match(mainCode, /process\.platform === 'darwin'/);
-  assert.match(mainCode, /path\.join\(app\.getPath\('appData'\), 'minecraft'\)/);
+  assert.match(mainCode, /resolveDefaultMinecraftDir\(appDataDirectory, process\.platform\)/);
   assert.match(mainCode, /\/Library\/Java\/JavaVirtualMachines/);
 });

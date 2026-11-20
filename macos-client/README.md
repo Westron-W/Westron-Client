@@ -1,4 +1,4 @@
-# Westron Client for macOS
+﻿# Westron Launcher for macOS
 
 This directory contains the macOS-only packaging configuration, app icon, and release output. The launcher source remains shared with the Windows build so features and fixes stay in sync.
 

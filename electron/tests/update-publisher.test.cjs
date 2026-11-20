@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const packageJson = require('../../package.json');
 const { MAX_UPDATE_FILE_BYTES, readUpdateFiles } = require('../update-publisher.cjs');
-const installerName = `Westron-Client-Setup-${packageJson.version}.exe`;
+const installerName = `Westron-Launcher-Setup-${packageJson.version}.exe`;
 const blockmapName = `${installerName}.blockmap`;
 
 test('reads the installer and both update sidecars from a release directory', async (context) => {
@@ -43,7 +43,7 @@ test('rebuilds stale release metadata from the versioned installer and its actua
   const staleManifest = Buffer.from([
     'version: 1.0.1',
     'files:',
-    '  - url: Westron-Client-Setup-1.0.1.exe',
+    '  - url: Westron-Launcher-Setup-1.0.1.exe',
     '    sha512: stale',
     '',
   ].join('\n'));

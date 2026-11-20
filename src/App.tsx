@@ -2,13 +2,13 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { isAppLanguage, SUPPORTED_LANGUAGES, translate, translateUi, type AppLanguage } from './i18n';
 import {
   ArrowDownToLine, ArrowRight, Box, Camera, Check, ChevronDown, CircleHelp, Compass, Image,
-  Cpu, FolderOpen, HardDrive, Layers3, LoaderCircle,
-  Languages, LogOut, Package, Pause, Play, Plus, RefreshCw, RotateCcw, Search,
+  Cpu, FolderOpen, HardDrive, Layers3, LoaderCircle, Minus,
+  Languages, LogOut, Package, Pause, Play, Plus, RefreshCw, RotateCcw, Search, Square,
   Settings2, ShieldCheck, Shirt, Sparkles, Sun, Trash2, Upload, UserRound, X,
 } from 'lucide-react';
 
 type ContentType = 'resourcepack' | 'shader';
-type Page = 'home' | 'mods' | 'resourcepacks' | 'shaders' | 'library' | 'appearance' | 'account' | 'screenshots' | 'settings';
+type Page = 'home' | 'mods' | 'resourcepacks' | 'shaders' | 'performance' | 'library' | 'appearance' | 'account' | 'screenshots' | 'settings';
 type LibrarySection = 'mods' | 'resourcepacks' | 'shaders';
 const IRIS_PROJECT_ID = 'YL57xq9U';
 const AppLanguageContext = createContext<AppLanguage>('en');
@@ -23,6 +23,7 @@ const pageLabels: Record<Page, string> = {
   mods: 'Mod keşfet',
   resourcepacks: 'Kaynak paketleri',
   shaders: 'Shader paketleri',
+  performance: 'Westron Launcher Modu',
   library: 'Kütüphane',
   appearance: 'Skin & Pelerin',
   account: 'Hesap',
@@ -56,7 +57,9 @@ export default function App() {
   const [setupLanguage, setSetupLanguage] = useState<AppLanguage>('en');
   const [offlineUsername, setOfflineUsername] = useState('Player');
   const [mods, setMods] = useState<ModrinthProject[]>([]);
+  const [modsTotal, setModsTotal] = useState(0);
   const [packProjects, setPackProjects] = useState<ModrinthProject[]>([]);
+  const [packProjectsTotal, setPackProjectsTotal] = useState(0);
   const [gameVersions, setGameVersions] = useState<MinecraftVersionOption[]>([]);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState('');
@@ -79,6 +82,7 @@ export default function App() {
   } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [screenshots, setScreenshots] = useState<GameScreenshot[]>([]);
+  const [screenshotsTotal, setScreenshotsTotal] = useState(0);
   const [screenshotStatus, setScreenshotStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [publisherBusy, setPublisherBusy] = useState(false);
   const [librarySection, setLibrarySection] = useState<LibrarySection>('mods');
@@ -87,7 +91,13 @@ export default function App() {
   const [westronAccount, setWestronAccount] = useState<WestronAccount | null>(null);
   const [westronProfile, setWestronProfile] = useState<WestronProfile | null>(null);
   const [skinAvatarFailed, setSkinAvatarFailed] = useState(false);
+  const [performanceThemeEnabled, setPerformanceThemeEnabled] = useState(true);
+  const [qualityShaderEnabled, setQualityShaderEnabled] = useState(false);
   const text = (value: string) => translateUi(state?.language ?? 'en', value);
+  const installedLabel = text('kurulu');
+  const installedLoaderLabel = state?.loaderInstalled && state.loader
+    ? `${state.loader.charAt(0).toUpperCase()}${state.loader.slice(1)} ${installedLabel.charAt(0).toUpperCase()}${installedLabel.slice(1)}`
+    : null;
   const installPercent = Math.max(0, Math.min(100, Math.round(installProgress?.overallPercent ?? 0)));
   const pageTitle = text(pageLabels[page]);
 
@@ -98,6 +108,15 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = state?.theme ?? 'dark';
   }, [state?.theme]);
+
+  useEffect(() => {
+    document.documentElement.dataset.performanceMode = state?.performanceMode ?? 'default';
+    document.documentElement.dataset.performanceTheme = String(performanceThemeEnabled);
+  }, [state?.performanceMode, performanceThemeEnabled]);
+
+  useEffect(() => {
+    setQualityShaderEnabled(state?.performanceShaderEnabled ?? false);
+  }, [state?.gameDirectory, state?.performanceShaderEnabled]);
 
   useEffect(() => {
     let active = true;
@@ -134,10 +153,27 @@ export default function App() {
     setError('');
     setScreenshotStatus('loading');
     try {
-      setScreenshots(await window.nocturne.listScreenshots());
+      const result = await window.nocturne.listScreenshotsPage(0, 12);
+      setScreenshots(result.items);
+      setScreenshotsTotal(result.total);
       setScreenshotStatus('ready');
     } catch (reason) {
       setScreenshotStatus('error');
+      reportError(reason);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function loadMoreScreenshots() {
+    if (busy || screenshots.length >= screenshotsTotal) return;
+    setBusy('screenshots-more');
+    setError('');
+    try {
+      const result = await window.nocturne.listScreenshotsPage(screenshots.length, 12);
+      setScreenshots((items) => [...items, ...result.items]);
+      setScreenshotsTotal(result.total);
+    } catch (reason) {
       reportError(reason);
     } finally {
       setBusy('');
@@ -215,11 +251,41 @@ export default function App() {
     }
   }
 
+  async function applyPerformanceMode(mode: LauncherState['performanceMode'], includeShader = false) {
+    await perform(`performance:${mode}`, () => window.nocturne.installPerformancePreset(mode, includeShader), (result) => {
+      if (result.blocked === 'game-running') return text('Oyun çalışırken performans modu değiştirilemez.');
+      if (mode === 'default') return text('Varsayılan mod etkinleştirildi.');
+      const message = text(mode === 'performance'
+        ? 'Ultra Performans modu etkinleştirildi.'
+        : 'Ultra Kalite modu etkinleştirildi.');
+      return result.skipped.length
+        ? `${message} ${text('Uyumlu olmayan modlar atlandı:')} ${result.skipped.join(', ')}`
+        : message;
+    });
+  }
+
   async function search() {
     setBusy('search');
     setError('');
     try {
-      setMods(await window.nocturne.searchMods(query.trim()));
+      const result = await window.nocturne.searchMods(query.trim());
+      setMods(result.projects);
+      setModsTotal(result.totalHits);
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function loadMoreMods() {
+    if (busy || mods.length >= modsTotal) return;
+    setBusy('search-more');
+    setError('');
+    try {
+      const result = await window.nocturne.searchMods(query.trim(), mods.length);
+      setMods((items) => [...items, ...result.projects]);
+      setModsTotal(result.totalHits);
     } catch (reason) {
       reportError(reason);
     } finally {
@@ -231,7 +297,24 @@ export default function App() {
     setBusy(`search:${type}`);
     setError('');
     try {
-      setPackProjects(await window.nocturne.searchContent(type, searchQuery));
+      const result = await window.nocturne.searchContent(type, searchQuery);
+      setPackProjects(result.projects);
+      setPackProjectsTotal(result.totalHits);
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function loadMorePacks(type: ContentType) {
+    if (busy || packProjects.length >= packProjectsTotal) return;
+    setBusy(`search:${type}:more`);
+    setError('');
+    try {
+      const result = await window.nocturne.searchContent(type, query.trim(), packProjects.length);
+      setPackProjects((items) => [...items, ...result.projects]);
+      setPackProjectsTotal(result.totalHits);
     } catch (reason) {
       reportError(reason);
     } finally {
@@ -257,7 +340,9 @@ export default function App() {
       setState(result.state);
       setProfilePrompt(null);
       setMods([]);
+      setModsTotal(0);
       setPackProjects([]);
+      setPackProjectsTotal(0);
       setQuery('');
       setNotice(`Minecraft ${gameVersion} ${loader} profili seçildi.`);
       return true;
@@ -313,7 +398,7 @@ export default function App() {
       setError('');
       try {
         setState(await window.nocturne.saveGameBehavior(behavior));
-        setNotice(text('Westron Client davranışı kaydedildi.'));
+        setNotice(text('Westron Launcher davranışı kaydedildi.'));
       } catch (reason) {
         reportError(reason);
       } finally {
@@ -338,7 +423,10 @@ export default function App() {
   useEffect(() => {
     if ((page !== 'mods' && !(page === 'library' && librarySection === 'mods'))
       || mods.length > 0 || !state || state.loader === 'vanilla') return;
-    void Promise.resolve().then(() => window.nocturne.searchMods('')).then(setMods).catch(reportError);
+    void Promise.resolve().then(() => window.nocturne.searchMods('')).then((result) => {
+      setMods(result.projects);
+      setModsTotal(result.totalHits);
+    }).catch(reportError);
   }, [page, librarySection, mods.length, state?.gameVersion, state?.loader]);
 
   useEffect(() => {
@@ -492,7 +580,7 @@ export default function App() {
       <aside className="sidebar">
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage('home'); }}>
           <span className="brand-mark"><Layers3 size={19} strokeWidth={1.8} /></span>
-          <span className="brand-name">Westron<span>.</span><small>CLIENT</small></span>
+          <span className="brand-name">Westron<span>.</span><small>LAUNCHER</small></span>
         </a>
 
         <section className="sidebar-profile">
@@ -543,6 +631,7 @@ export default function App() {
           <NavButton icon={<Sparkles />} label={text('Modlar')} active={page === 'mods'} onClick={() => setPage('mods')} badge="MODRINTH" />
           <NavButton icon={<Image />} label={text('Kaynak Paketleri')} active={page === 'resourcepacks'} onClick={() => setPage('resourcepacks')} badge="MODRINTH" />
           <NavButton icon={<Sun />} label={text('Shader Paketleri')} active={page === 'shaders'} onClick={() => setPage('shaders')} badge="MODRINTH" />
+          <NavButton icon={<Cpu />} label={text('Westron Launcher Modu')} active={page === 'performance'} onClick={() => setPage('performance')} />
           <NavButton icon={<Camera />} label={text('Ekran Görüntüleri')} active={page === 'screenshots'} onClick={() => setPage('screenshots')} count={screenshots.length} />
           <NavButton icon={<Shirt />} label={text('Skin & Pelerin')} active={page === 'appearance'} onClick={() => setPage('appearance')} />
           <NavButton icon={<UserRound />} label={text('Hesap')} active={page === 'account'} onClick={() => setPage('account')} />
@@ -555,14 +644,19 @@ export default function App() {
           <ShieldCheck size={16} className="sidebar-shield" />
         </div>
         <NavButton icon={<Settings2 />} label={text('Ayarlar')} active={page === 'settings'} onClick={() => setPage('settings')} />
-        <div className="sidebar-foot">WESTRON CLIENT <span>•</span> v{state?.displayVersion ?? '…'}</div>
+        <div className="sidebar-foot">WESTRON LAUNCHER <span>•</span> v{state?.displayVersion ?? '…'}</div>
       </aside>
 
       <main className="main-area">
         <header className="topbar">
-          <div className="breadcrumbs"><span>WESTRON CLIENT</span><ChevronDown size={13} /><strong>{pageTitle}</strong></div>
+          <div className="window-controls">
+            <button type="button" aria-label={text('Pencereyi küçült')} title={text('Pencereyi küçült')} onClick={() => { void window.nocturne.controlWindow('minimize'); }}><Minus size={14} /></button>
+            <button type="button" aria-label={text('Pencereyi büyüt veya geri yükle')} title={text('Pencereyi büyüt veya geri yükle')} onClick={() => { void window.nocturne.controlWindow('maximize'); }}><Square size={13} /></button>
+            <button type="button" className="window-close" aria-label={text('Kapat')} title={text('Kapat')} onClick={() => { void window.nocturne.controlWindow('close'); }}><X size={15} /></button>
+          </div>
+          <div className="breadcrumbs"><span>WESTRON LAUNCHER</span><ChevronDown size={13} /><strong>{pageTitle}</strong></div>
           <div className="topbar-right">
-            <span className="top-version"><span className="online-dot" />{state?.menuModInstalled ? text('Westron Client hazır') : state?.loaderInstalled ? `${state.loader} ${text('kurulu')}` : `${text('Sürüm')} ${state?.gameVersion ?? '…'}`}</span>
+            <span className="top-version"><span className="online-dot" />{state?.menuModInstalled ? text('Westron Launcher hazır') : installedLoaderLabel ?? `${text('Sürüm')} ${state?.gameVersion ?? '…'}`}</span>
             <button className="icon-button" aria-label={text('Yardım')} onClick={() => setNotice(text('Profil kurulumu ve içerik yönetimi için sol menüyü kullanın.'))}><CircleHelp size={17} /></button>
             {westronProfile?.skin && !skinAvatarFailed
               ? <div className="avatar avatar-skin"><SkinFaceAvatar profile={westronProfile} size="small" onError={() => setSkinAvatarFailed(true)} /></div>
@@ -610,7 +704,7 @@ export default function App() {
               setOfflineUsername={setOfflineUsername}
               busy={busy}
               onInstall={() => perform('profile', () => window.nocturne.installGameProfile(), (message) => message || 'Oyun profili hazır.')}
-              onInstallMenu={() => perform('menu', () => window.nocturne.installMenu(), (message) => message || 'Westron Client arayüzü kuruldu.')}
+              onInstallMenu={() => perform('menu', () => window.nocturne.installMenu(), (message) => message || 'Westron Launcher arayüzü kuruldu.')}
               onLaunchGame={() => perform('launch', () => window.nocturne.launchGame(microsoftAccount
                 ? { mode: 'microsoft' }
                 : { mode: 'offline', offlineUsername }), (message) => message || 'Minecraft başlatıldı.')}
@@ -624,12 +718,14 @@ export default function App() {
           {page === 'mods' && (
             <ModsPage
               mods={mods}
+              totalHits={modsTotal}
               query={query}
               setQuery={setQuery}
               busy={busy}
               installedMods={state?.mods ?? []}
               installedProjectIds={state?.modrinthModProjects ?? []}
               onSearch={search}
+              onLoadMore={loadMoreMods}
               onInstall={(id, name) => { void installMod(id, name); }}
               onRemove={requestModRemoval}
               onOpenFolder={() => perform('folder', () => window.nocturne.openModsFolder())}
@@ -643,12 +739,14 @@ export default function App() {
             <ModrinthPackPage
               type={page === 'resourcepacks' ? 'resourcepack' : 'shader'}
               projects={packProjects}
+              totalHits={packProjectsTotal}
               query={query}
               setQuery={setQuery}
               busy={busy}
               installedFiles={page === 'resourcepacks' ? state?.resourcePacks ?? [] : state?.shaderPacks ?? []}
               installedProjectIds={page === 'resourcepacks' ? state?.resourcePackProjects ?? [] : state?.shaderProjects ?? []}
               onSearch={() => { void searchPacks(page === 'resourcepacks' ? 'resourcepack' : 'shader'); }}
+              onLoadMore={() => { void loadMorePacks(page === 'resourcepacks' ? 'resourcepack' : 'shader'); }}
               onInstall={(id, title) => { void installPack(page === 'resourcepacks' ? 'resourcepack' : 'shader', id, title); }}
               onRemove={(fileName) => requestPackRemoval(page === 'resourcepacks' ? 'resourcepack' : 'shader', fileName)}
               onOpenFolder={() => perform('folder', () => window.nocturne.openContentFolder(page === 'resourcepacks' ? 'resourcepack' : 'shader'))}
@@ -658,6 +756,22 @@ export default function App() {
               irisInstalled={Boolean(state?.modrinthModProjects.includes(IRIS_PROJECT_ID))}
               onInstallFabric={() => { void ensureFabricProfile(); }}
               onInstallIris={() => { void installMod(IRIS_PROJECT_ID, 'Iris shader altyapısı'); }}
+            />
+          )}
+          {page === 'performance' && (
+            <PerformanceModesPage
+              mode={state?.performanceMode ?? 'default'}
+              includeShader={qualityShaderEnabled}
+              themeEnabled={performanceThemeEnabled}
+              loader={state?.loader ?? 'vanilla'}
+              loaderInstalled={Boolean(state?.loaderInstalled)}
+              gameRunning={Boolean(state?.gameRunning)}
+              busy={busy}
+              onShaderChange={setQualityShaderEnabled}
+              onThemeChange={setPerformanceThemeEnabled}
+              onSelect={(mode) => {
+                void applyPerformanceMode(mode, mode === 'quality' && state?.loader === 'fabric' && qualityShaderEnabled);
+              }}
             />
           )}
           {page === 'library' && (
@@ -682,13 +796,16 @@ export default function App() {
           {page === 'screenshots' && (
             <ScreenshotsPage
               screenshots={screenshots}
+              total={screenshotsTotal}
               status={screenshotStatus}
               busy={busy}
               onRefresh={() => { void refreshScreenshots(); }}
+              onLoadMore={() => { void loadMoreScreenshots(); }}
               onDelete={async (fileName) => {
                 await perform(`screenshot:${fileName}`, async () => {
                   await window.nocturne.deleteScreenshot(fileName);
                   setScreenshots((items) => items.filter((item) => item.name !== fileName));
+                  setScreenshotsTotal((total) => Math.max(0, total - 1));
                 }, () => text('Ekran görüntüsü silindi.'));
               }}
               onOpenFolder={() => perform('folder', () => window.nocturne.openScreenshotsFolder())}
@@ -835,10 +952,10 @@ function UpdateBanner({ status, onCheck, onDownload, onRestart }: {
       </div>
       <div className="update-banner-copy">
         <div className="update-banner-heading">
-          <strong>{status.status === 'available' ? `Westron Client ${status.version} ${t('hazır')}` : status.status === 'downloaded' ? t('Güncelleme kuruluma hazır') : status.status === 'up-to-date' ? t('Yeni güncelleme yok') : status.status === 'error' ? t('Güncelleme tamamlanamadı') : t('Westron Client güncelleniyor')}</strong>
+          <strong>{status.status === 'available' ? `Westron Launcher ${status.version} ${t('hazır')}` : status.status === 'downloaded' ? t('Güncelleme kuruluma hazır') : status.status === 'up-to-date' ? t('Yeni güncelleme yok') : status.status === 'error' ? t('Güncelleme tamamlanamadı') : t('Westron Launcher güncelleniyor')}</strong>
           <span>{t('Şu anki sürüm')} {status.currentVersion}</span>
         </div>
-        <p>{status.message}</p>
+        <p>{status.message ? t(status.message) : ''}</p>
         {downloading && (
           <div className="update-progress" aria-label={`İndirme yüzde ${status.percent ?? 0}`}>
             <span style={{ width: `${status.percent ?? 0}%` }} />
@@ -1042,6 +1159,128 @@ function PageHeading({ eyebrow, title, description, children }: {
   );
 }
 
+function PerformanceModesPage({
+  mode,
+  includeShader,
+  themeEnabled,
+  loader,
+  loaderInstalled,
+  gameRunning,
+  busy,
+  onShaderChange,
+  onThemeChange,
+  onSelect,
+}: {
+  mode: LauncherState['performanceMode'];
+  includeShader: boolean;
+  themeEnabled: boolean;
+  loader: LauncherState['loader'];
+  loaderInstalled: boolean;
+  gameRunning: boolean;
+  busy: string;
+  onShaderChange: (enabled: boolean) => void;
+  onThemeChange: (enabled: boolean) => void;
+  onSelect: (mode: LauncherState['performanceMode']) => void;
+}) {
+  const t = useUiText();
+  const presetsSupported = loader !== 'vanilla';
+  const shaderSupported = loader === 'fabric';
+  const cards = [
+    {
+      mode: 'performance' as const,
+      title: 'Ultra Performans',
+      description: 'FPS değerini artırmaya odaklı, seçili sürümle uyumlu modları kur.',
+      icon: <Cpu size={19} />,
+      style: 'mode-performance',
+    },
+    {
+      mode: 'quality' as const,
+      title: 'Ultra Kalite',
+      description: 'Distant Horizons ve görsel iyileştirmelerle oyun görüntüsünü geliştir.',
+      icon: <Sun size={19} />,
+      style: 'mode-quality',
+    },
+    {
+      mode: 'default' as const,
+      title: 'Varsayılan Westron Launcher',
+      description: 'Westron Launcher modlarının etkisini kaldır; kişisel yüklemelerin korunur.',
+      icon: <RotateCcw size={19} />,
+      style: '',
+    },
+  ];
+
+  return (
+    <>
+      <PageHeading
+        eyebrow={t('OYUN MODLARI')}
+        title={t('Westron Launcher Modu')}
+        description={t('Oyun deneyimini seçili sürüme uygun hazır profillerle değiştir.')}
+      />
+      {gameRunning && (
+        <div className="inline-callout"><Cpu size={17} /><span>{t('Oyun çalışırken performans modu değiştirilemez.')}</span></div>
+      )}
+      {!presetsSupported && (
+        <div className="inline-callout"><Cpu size={17} /><span>{t('Performans ve kalite modları için Fabric veya Forge seç.')}</span></div>
+      )}
+      {presetsSupported && !loaderInstalled && (
+        <div className="inline-callout"><Cpu size={17} /><span>{t('Önce seçili oyun profilini kur.')}</span></div>
+      )}
+      <div className="performance-mode-grid">
+        {cards.map((card) => {
+          const selected = mode === card.mode;
+          const unavailable = card.mode !== 'default' && (!presetsSupported || !loaderInstalled);
+          const cardBusy = busy === `performance:${card.mode}`;
+          return (
+            <article
+              key={card.mode}
+              className={`performance-mode-card ${card.style} ${selected ? 'selected' : ''}`}
+              aria-current={selected ? 'true' : undefined}
+            >
+              <div className="performance-mode-icon">{card.icon}</div>
+              <span className="eyebrow">{t(card.mode === 'default' ? 'WESTRON LAUNCHER' : card.mode === 'performance' ? 'FPS ODAKLI' : 'GÖRSEL KALİTE')}</span>
+              <h2>{t(card.title)}</h2>
+              <p>{t(card.description)}</p>
+              {card.mode !== 'default' && (
+                <label className={`performance-option ${unavailable ? 'disabled' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={themeEnabled}
+                    disabled={Boolean(busy)}
+                    onChange={(event) => onThemeChange(event.currentTarget.checked)}
+                  />
+                  <span>{t('Temayı değiştir')}<small>{t('Seçili moda uygun renkleri kullan.')}</small></span>
+                </label>
+              )}
+              {card.mode === 'quality' && (
+                <label className={`performance-option ${unavailable || !shaderSupported ? 'disabled' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={includeShader}
+                    disabled={Boolean(busy) || unavailable || !shaderSupported}
+                    onChange={(event) => onShaderChange(event.currentTarget.checked)}
+                  />
+                  <span>{t('Shader yükle')}<small>{t(shaderSupported
+                    ? 'Varsayılan olarak kapalıdır; Iris ve Complementary Shaders kurulur.'
+                    : 'Shader yalnızca Fabric profillerinde kullanılabilir.')}</small></span>
+                </label>
+              )}
+              <button
+                className={`button ${selected ? 'button-secondary' : 'button-primary'}`}
+                disabled={Boolean(busy) || selected || gameRunning || unavailable}
+                aria-pressed={selected}
+                onClick={() => onSelect(card.mode)}
+              >
+                {cardBusy ? <LoaderCircle className="spin" size={15} /> : selected ? <Check size={15} /> : <Sparkles size={15} />}
+                {cardBusy ? t('Yükleniyor…') : selected ? t('Aktif Mod') : t('Etkinleştir')}
+              </button>
+            </article>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
 function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, setOfflineUsername, busy, onInstall, onInstallMenu, onLaunchGame, onSignInMicrosoft, onCancelMicrosoftSignIn, onSignOutMicrosoft, onOpenSettings, onMods }: {
   state: LauncherState | null; microsoftAccount: MicrosoftAccount | null; microsoftBusy: boolean;
   offlineUsername: string; setOfflineUsername: (value: string) => void;
@@ -1131,7 +1370,7 @@ function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, set
       <div className="dashboard-grid">
         <div className="info-card install-card">
           <div className="card-icon violet"><Layers3 size={18} /></div><span className="card-kicker">{t('OYUN PROFİLİ')}</span>
-          <div className="card-main"><strong>{ready ? t('Oyun profili hazır') : profileReady ? t('Oyun arayüzünü ekle') : `${state?.loader ?? 'fabric'} ${t('profilini kur')}`}</strong><span>{ready ? `Minecraft ${state?.gameVersion} ${t('profili kullanıma hazır.')}` : profileReady ? t('Uyumlu Westron Client oyun arayüzünü kur.') : `${t('Minecraft için oyun dosyalarını hazırla:')} ${state?.gameVersion ?? ''}`}</span></div>
+          <div className="card-main"><strong>{ready ? t('Oyun profili hazır') : profileReady ? t('Oyun arayüzünü ekle') : `${state?.loader ?? 'fabric'} ${t('profilini kur')}`}</strong><span>{ready ? `Minecraft ${state?.gameVersion} ${t('profili kullanıma hazır.')}` : profileReady ? t('Uyumlu Westron Launcher oyun arayüzünü kur.') : `${t('Minecraft için oyun dosyalarını hazırla:')} ${state?.gameVersion ?? ''}`}</span></div>
           <button className="round-arrow" onClick={primaryAction} disabled={Boolean(busy)} aria-label={primaryLabel}><ArrowRight size={17} /></button>
         </div>
         <div className="info-card">
@@ -1162,9 +1401,10 @@ function MicrosoftMark() {
   );
 }
 
-function ModsPage({ mods, query, setQuery, busy, installedMods, installedProjectIds, onSearch, onInstall, onRemove, onOpenFolder, loaderInstalled, loader, gameVersion, onInstallProfile }: {
-  mods: ModrinthProject[]; query: string; setQuery: (value: string) => void; busy: string;
+function ModsPage({ mods, totalHits, query, setQuery, busy, installedMods, installedProjectIds, onSearch, onLoadMore, onInstall, onRemove, onOpenFolder, loaderInstalled, loader, gameVersion, onInstallProfile }: {
+  mods: ModrinthProject[]; totalHits: number; query: string; setQuery: (value: string) => void; busy: string;
   installedMods: LauncherState['mods']; installedProjectIds: string[]; onSearch: () => void; onInstall: (id: string, name: string) => void;
+  onLoadMore: () => void;
   onRemove: (name: string) => void; onOpenFolder: () => void; loaderInstalled: boolean; loader: LauncherState['loader']; gameVersion: string; onInstallProfile: () => void;
 }) {
   const t = useUiText();
@@ -1181,7 +1421,7 @@ function ModsPage({ mods, query, setQuery, busy, installedMods, installedProject
         <div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') onSearch(); }} placeholder={t('Mod adı, ör. Sodium')} /><kbd>ENTER</kbd></div>
         <button className="button button-secondary search-button" onClick={onSearch} disabled={busy === 'search'}>{busy === 'search' ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />}{t('Ara')}</button>
       </div>
-      <div className="results-heading"><div><span className="eyebrow">{t('ÖNE ÇIKANLAR')}</span><span className="result-count">{mods.length ? `${mods.length} ${t('sonuç')}` : t('Aramaya başla')}</span></div><span className="compatibility"><span className="online-dot" />{loader.toUpperCase()} {gameVersion} {t('UYUMLU')}</span></div>
+      <div className="results-heading"><div><span className="eyebrow">{t('ÖNE ÇIKANLAR')}</span><span className="result-count">{totalHits ? `${totalHits} ${t('sonuç')}` : t('Aramaya başla')}</span></div><span className="compatibility"><span className="online-dot" />{loader.toUpperCase()} {gameVersion} {t('UYUMLU')}</span></div>
       <div className="mod-grid">
         {mods.map((mod) => {
           const installed = installedProjectIds.includes(mod.id)
@@ -1200,15 +1440,24 @@ function ModsPage({ mods, query, setQuery, busy, installedMods, installedProject
           </article>;
         })}
       </div>
+      {mods.length < totalHits && (
+        <div className="load-more-results">
+          <button className="button button-secondary" onClick={onLoadMore} disabled={Boolean(busy)}>
+            {busy === 'search-more' ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
+            {t('Daha fazla seçenek göster')}
+          </button>
+        </div>
+      )}
       {!mods.length && <div className="empty-state"><div className="empty-icon"><Search size={22} /></div><strong>{t('Mod keşfine başla')}</strong><span>{t('Arama yap veya bekleyin; popüler modlar listelenecek.')}</span></div>}
       {installedMods.length > 0 && <section className="installed-section"><div className="section-title compact"><div><span className="eyebrow">{t('YÜKLÜ MODLAR')}</span><h3>{t('Kütüphanen')}</h3></div><span className="result-count">{installedMods.length} {t('dosya')}</span></div><ModList mods={installedMods} busy={busy} onRemove={onRemove} /></section>}
     </>
   );
 }
 
-function ModrinthPackPage({ type, projects, query, setQuery, busy, installedFiles, installedProjectIds, gameVersion, loader, fabricInstalled, irisInstalled, onSearch, onInstall, onRemove, onOpenFolder, onInstallFabric, onInstallIris }: {
+function ModrinthPackPage({ type, projects, totalHits, query, setQuery, busy, installedFiles, installedProjectIds, gameVersion, loader, fabricInstalled, irisInstalled, onSearch, onLoadMore, onInstall, onRemove, onOpenFolder, onInstallFabric, onInstallIris }: {
   type: ContentType;
   projects: ModrinthProject[];
+  totalHits: number;
   query: string;
   setQuery: (value: string) => void;
   busy: string;
@@ -1219,6 +1468,7 @@ function ModrinthPackPage({ type, projects, query, setQuery, busy, installedFile
   fabricInstalled: boolean;
   irisInstalled: boolean;
   onSearch: () => void;
+  onLoadMore: () => void;
   onInstall: (id: string, title: string) => void;
   onRemove: (fileName: string) => void;
   onOpenFolder: () => void;
@@ -1291,7 +1541,7 @@ function ModrinthPackPage({ type, projects, query, setQuery, busy, installedFile
         </button>
       </div>
       <div className="results-heading">
-        <div><span className="eyebrow">MINECRAFT {gameVersion} {t('UYUMLU')}</span><span className="result-count">{projects.length ? `${projects.length} ${t('sonuç')}` : t('Aramaya başla')}</span></div>
+        <div><span className="eyebrow">MINECRAFT {gameVersion} {t('UYUMLU')}</span><span className="result-count">{totalHits ? `${totalHits} ${t('sonuç')}` : t('Aramaya başla')}</span></div>
         <span className="compatibility"><span className="online-dot" />ZIP · MODRINTH</span>
       </div>
       <div className="mod-grid">
@@ -1325,6 +1575,14 @@ function ModrinthPackPage({ type, projects, query, setQuery, busy, installedFile
           );
         })}
       </div>
+      {projects.length < totalHits && (
+        <div className="load-more-results">
+          <button className="button button-secondary" onClick={onLoadMore} disabled={Boolean(busy)}>
+            {busy === `search:${type}:more` ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
+            {t('Daha fazla seçenek göster')}
+          </button>
+        </div>
+      )}
       {!projects.length && (
         <div className="empty-state">
           <div className="empty-icon">{isShader ? <Sun size={22} /> : <Image size={22} />}</div>
@@ -1464,11 +1722,13 @@ function InstalledLibrarySection({
   );
 }
 
-function ScreenshotsPage({ screenshots, status, busy, onRefresh, onDelete, onOpenFolder }: {
+function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMore, onDelete, onOpenFolder }: {
   screenshots: GameScreenshot[];
+  total: number;
   status: 'loading' | 'ready' | 'error';
   busy: string;
   onRefresh: () => void;
+  onLoadMore: () => void;
   onDelete: (fileName: string) => void;
   onOpenFolder: () => void;
 }) {
@@ -1528,6 +1788,7 @@ function ScreenshotsPage({ screenshots, status, busy, onRefresh, onDelete, onOpe
           <button type="button" className="button button-secondary button-small" onClick={onRefresh}>{t('Yenile')}</button>
         </div>
       ) : screenshots.length ? (
+        <>
         <div className="screenshot-grid">
           {screenshots.map((screenshot) => (
             <article className="screenshot-card" key={screenshot.name}>
@@ -1548,6 +1809,15 @@ function ScreenshotsPage({ screenshots, status, busy, onRefresh, onDelete, onOpe
             </article>
           ))}
         </div>
+        {screenshots.length < total && (
+          <div className="load-more-results">
+            <button className="button button-secondary" onClick={onLoadMore} disabled={Boolean(busy)}>
+              {busy === 'screenshots-more' ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
+              {t('Daha fazla seçenek göster')}
+            </button>
+          </div>
+        )}
+        </>
       ) : (
         <div className="empty-state"><div className="empty-icon"><Camera size={22} /></div><strong>{t('Henüz ekran görüntüsü yok.')}</strong><span>{t('Minecraft içinde F2 tuşuyla ekran görüntüsü al; burada görünecektir.')}</span></div>
       )}
@@ -1643,14 +1913,14 @@ function SettingsPage({
         <div className="setting-row"><div><strong>{t('selectedProfile')}</strong><span>{state?.gameDirectory}</span></div><span className="setting-value">{state?.gameVersion ?? '…'} · {state?.loader ?? '…'}</span></div>
       </section>
       <section className="settings-panel">
-        <div className="settings-heading"><div className="card-icon violet"><Play size={18} /></div><div><h3>{t('Westron Client davranışı')}</h3><span>{t('Minecraft çalışırken ve kapandıktan sonra launcher davranışını seç.')}</span></div></div>
-        <div className="setting-row"><div><strong>{t('Oyun ve launcher davranışı')}</strong><span>{t('Varsayılan: oyun kapandığında launcher da kapanır.')}</span></div><select value={gameBehavior} onChange={(event) => { if (['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(event.target.value)) onGameBehaviorChange(event.target.value as GameBehavior); }} disabled={Boolean(busy)}><option value="close-on-game-exit">{t('Oyun kapandığında Westron Client kapansın')}</option><option value="stay-open">{t('Westron Client her zaman açık kalsın')}</option><option value="hide-and-restore">{t('Oyun açılınca gizle, oyun kapanınca geri aç')}</option></select></div>
+        <div className="settings-heading"><div className="card-icon violet"><Play size={18} /></div><div><h3>{t('Westron Launcher davranışı')}</h3><span>{t('Minecraft çalışırken ve kapandıktan sonra launcher davranışını seç.')}</span></div></div>
+        <div className="setting-row"><div><strong>{t('Oyun ve launcher davranışı')}</strong><span>{t('Varsayılan: oyun kapandığında launcher da kapanır.')}</span></div><select value={gameBehavior} onChange={(event) => { if (['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(event.target.value)) onGameBehaviorChange(event.target.value as GameBehavior); }} disabled={Boolean(busy)}><option value="close-on-game-exit">{t('Oyun kapandığında Westron Launcher kapansın')}</option><option value="stay-open">{t('Westron Launcher her zaman açık kalsın')}</option><option value="hide-and-restore">{t('Oyun açılınca gizle, oyun kapanınca geri aç')}</option></select></div>
       </section>
       <section className="settings-panel system-panel">
         <div className="settings-heading"><div className="card-icon blue"><Cpu size={18} /></div><div><h3>{t('systemStatus')}</h3><span>{t('requiredComponents')}</span></div></div>
         <div className="system-row"><span>Java runtime</span><strong className={state?.javaAvailable ? 'text-good' : 'text-warn'}>{state?.javaAvailable ? t('detected') : t('willInstall')}</strong><span className="system-path">{state?.javaAvailable || t('runtimeAutoPrepared')}</span></div>
         <div className="system-row"><span>{state?.loader ?? 'Loader'}</span><strong className={state?.loaderInstalled ? 'text-good' : ''}>{state?.loaderInstalled ? t('installed') : t('notInstalled')}</strong><span className="system-path">{t('profileInstallStatus')}</span></div>
-        <div className="system-row"><span>Westron Client</span><strong className={state?.menuModInstalled ? 'text-good' : ''}>{state?.menuModInstalled ? t('installed') : state?.westronModSupported ? t('notInstalled') : t('unsupportedProfile')}</strong><span className="system-path">{t('supportedFabricOnly')}</span></div>
+        <div className="system-row"><span>Westron Launcher</span><strong className={state?.menuModInstalled ? 'text-good' : ''}>{state?.menuModInstalled ? t('installed') : state?.westronModSupported ? t('notInstalled') : t('unsupportedProfile')}</strong><span className="system-path">{t('supportedFabricOnly')}</span></div>
       </section>
       <section className="settings-panel update-settings">
         <div className="settings-heading"><div className="card-icon violet"><ArrowDownToLine size={18} /></div><div><h3>{t('updates')}</h3><span>{t('installedVersion')} {state?.displayVersion ?? '…'}</span></div></div>

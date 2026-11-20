@@ -13,7 +13,6 @@ services:
       DATABASE_PATH: /data/db/skin-api.sqlite
       SKINS_DIR: /data/skins
       UPDATES_DIR: /data/updates
-      UPDATE_PUBLISHER_EMAIL: ${UPDATE_PUBLISHER_EMAIL:-ermiscaner78@gmail.com}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://westronskin.sytes.net}
       TRUST_PROXY: ${TRUST_PROXY:-}
     volumes:

@@ -57,7 +57,7 @@ const errorResponse = {
 };
 
 function parsePositiveInteger(value, fallback, name) {
-  const parsed = Number(value ?? fallback);
+  const parsed = Number(value ? fallback);
   if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer`);
   return parsed;
 }
@@ -123,7 +123,7 @@ export async function buildApp({
   const databasePath = env.DATABASE_PATH || path.join(dataDir, 'db', 'skin-api.sqlite');
   const skinsDir = path.resolve(env.SKINS_DIR || path.join(dataDir, 'skins'));
   const updatesDir = path.resolve(env.UPDATES_DIR || path.join(dataDir, 'updates'));
-  const updatePublisherEmail = normalizeEmail(env.UPDATE_PUBLISHER_EMAIL || UPDATE_PUBLISHER_EMAIL);
+  const updatePublisherEmail = UPDATE_PUBLISHER_EMAIL;
   const publicUrl = new URL(env.PUBLIC_BASE_URL || 'http://localhost:3000');
   if (!['http:', 'https:'].includes(publicUrl.protocol) || publicUrl.username || publicUrl.password) {
     throw new Error('PUBLIC_BASE_URL must be a valid HTTP(S) origin without credentials');
@@ -455,7 +455,9 @@ export async function buildApp({
   }
 
   function issueOneTimeToken(tableName, userId) {
-    const { token, tokenHash } = tableName === 'email_verification_tokens' ? createVerificationCode() : createOpaqueToken();
+    const { token, tokenHash } = tableName === 'email_verification_tokens' || tableName === 'password_reset_tokens'
+      ? createVerificationCode()
+      : createOpaqueToken();
     const expiresAt = Date.now() + oneTimeTokenTtlMinutes * 60 * 1000;
     const now = new Date().toISOString();
     database.transaction(() => {
@@ -615,7 +617,7 @@ export async function buildApp({
         || existing.minecraft_username_normalized === normalizeUsername(username)
         ? 'username_taken'
         : 'email_taken';
-      throw new ApiError(409, code, code === 'username_taken' ? 'Bu kullanıcı adı kullanımda.' : 'Bu e-posta adresi kullanımda.');
+      throw new ApiError(409, code, code === 'username_taken' ? 'Bu kullan1c1 ad1 kullan1mda.' : 'Bu e-posta adresi kullan1mda.');
     }
     const credentials = await hashPassword(password);
     const userId = createId();

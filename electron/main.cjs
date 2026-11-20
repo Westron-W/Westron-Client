@@ -3,6 +3,8 @@ const { autoUpdater } = require('electron-updater');
 const packageJson = require('../package.json');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+app.setName('Westron Launcher');
+app.setPath('cache', path.join(app.getPath('userData'), 'renderer-cache-v2'));
 const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
 const {
@@ -22,6 +24,22 @@ const { createMicrosoftAuthService } = require('./microsoft-auth.cjs');
 const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-downloads.cjs');
 const { readUpdateFiles } = require('./update-publisher.cjs');
 const { configureUpdateFeed } = require('./update-config.cjs');
+const {
+  getPerformancePresetProjects,
+  QUALITY_SHADER,
+  SHADER_LOADER,
+} = require('./performance-presets.cjs');
+const {
+  defaultPerformanceProfile,
+  forgetPerformanceProjects,
+  removePerformanceManagedFiles,
+  readPerformanceProfile,
+  writePerformanceProfile,
+} = require('./performance-profile.cjs');
+const {
+  getDefaultMinecraftDir: resolveDefaultMinecraftDir,
+  migrateLegacyMinecraftProfiles,
+} = require('./minecraft-paths.cjs');
 const {
   deleteScreenshot,
   getScreenshotsDirectory,
@@ -45,6 +63,7 @@ let minecraftKitPromise;
 let minecraftVersionsCache = { expiresAt: 0, versions: [] };
 let updateStatus = { status: 'idle', currentVersion: DISPLAY_VERSION, percent: 0 };
 let updateCheckPromise = null;
+const activeGameSessions = new Set();
 const refreshWestronAuth = createWestronAuthRefresher({
   readCredentials: readWestronAuth,
   refresh: (input) => westronApi.refresh(input),
@@ -193,15 +212,22 @@ function configureAutoUpdater() {
 
 function getLegacySettingsFiles() {
   return [
+    path.join(app.getPath('appData'), 'westron-client', 'settings.json'),
+    path.join(app.getPath('appData'), 'Westron Client', 'settings.json'),
     path.join(app.getPath('appData'), 'Nocturne Launcher', 'settings.json'),
     path.join(app.getPath('appData'), 'nocturne-launcher', 'settings.json'),
   ];
 }
 
 function getDefaultMinecraftDir() {
-  return process.platform === 'darwin'
-    ? path.join(app.getPath('appData'), 'minecraft')
-    : path.join(app.getPath('appData'), '.minecraft');
+  const appDataDirectory = process.platform === 'win32'
+    ? process.env.APPDATA
+    : app.getPath('appData');
+  const pathApi = process.platform === 'win32' ? path.win32 : path.posix;
+  if (typeof appDataDirectory !== 'string' || !pathApi.isAbsolute(appDataDirectory)) {
+    throw new Error('Minecraft klasörü için geçerli uygulama verisi yolu bulunamadı.');
+  }
+  return resolveDefaultMinecraftDir(appDataDirectory, process.platform);
 }
 
 async function readSettings() {
@@ -218,31 +244,33 @@ async function readSettings() {
         if (legacyError.code !== 'ENOENT') throw legacyError;
       }
     }
-    if (contents === undefined) {
-      return {
-        minecraftDir: getDefaultMinecraftDir(),
-        offlineUsername: 'Player',
-        gameVersion: GAME_VERSION,
-        loader: DEFAULT_LOADER,
-        language: 'en',
-        theme: 'dark',
-        languageSetupComplete: false,
-        profileNoticeDismissed: false,
-        gameBehavior: 'close-on-game-exit',
-      };
-    }
   }
-  let saved;
-  try {
-    saved = JSON.parse(contents);
-  } catch (error) {
-    throw new Error(`Launcher ayar dosyası okunamadı: ${error.message}`);
+  let saved = {};
+  if (contents !== undefined) {
+    try {
+      saved = JSON.parse(contents);
+    } catch (error) {
+      throw new Error(`Launcher ayar dosyası okunamadı: ${error.message}`);
+    }
   }
   if (!saved || typeof saved !== 'object' || Array.isArray(saved)) {
     throw new Error('Launcher ayar dosyasının biçimi geçersiz.');
   }
-  return {
-    minecraftDir: typeof saved.minecraftDir === 'string' ? saved.minecraftDir : getDefaultMinecraftDir(),
+  const targetMinecraftDir = getDefaultMinecraftDir();
+  if (process.platform === 'win32') {
+    await fs.mkdir(path.join(targetMinecraftDir, 'westron-profiles'), { recursive: true });
+    const legacyDirectories = [
+      saved.minecraftDir,
+      path.join(app.getPath('appData'), 'westron-client', 'renderer-cache-v2', '.minecraft'),
+    ].filter((directory) => typeof directory === 'string' && directory.length > 0);
+    for (const legacyDirectory of new Set(legacyDirectories)) {
+      await migrateLegacyMinecraftProfiles(legacyDirectory, targetMinecraftDir);
+    }
+  }
+  const settings = {
+    minecraftDir: process.platform === 'win32'
+      ? targetMinecraftDir
+      : (typeof saved.minecraftDir === 'string' ? saved.minecraftDir : targetMinecraftDir),
     offlineUsername: typeof saved.offlineUsername === 'string' ? saved.offlineUsername : 'Player',
     gameVersion: isSupportedGameVersion(saved.gameVersion) ? saved.gameVersion : GAME_VERSION,
     loader: SUPPORTED_LOADERS.has(saved.loader) ? saved.loader : DEFAULT_LOADER,
@@ -253,6 +281,10 @@ async function readSettings() {
     gameBehavior: ['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(saved.gameBehavior)
       ? saved.gameBehavior : 'close-on-game-exit',
   };
+  if (process.platform === 'win32') {
+    await saveSettings(settings);
+  }
+  return settings;
 }
 
 async function saveSettings(settings) {
@@ -559,6 +591,7 @@ async function listMods(minecraftDir) {
 async function getState() {
   const settings = await readSettings();
   const gameDirectory = getInstanceDir(settings.minecraftDir, settings.gameVersion, settings.loader);
+  const performanceProfile = await readPerformanceProfile(gameDirectory);
   let loaderInstalled = false;
   try {
     const versions = await fs.readdir(path.join(gameDirectory, 'versions'));
@@ -577,6 +610,7 @@ async function getState() {
   return {
     ...settings,
     gameDirectory,
+    gameRunning: activeGameSessions.size > 0,
     version: app.getVersion(),
     displayVersion: DISPLAY_VERSION,
     microsoftAuthConfigured: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -592,6 +626,8 @@ async function getState() {
     resourcePackProjects: Object.keys(resourcePackInstalls),
     shaderProjects: Object.keys(shaderPackInstalls),
     modrinthModProjects: Object.keys(modInstalls),
+    performanceMode: performanceProfile.mode,
+    performanceShaderEnabled: performanceProfile.mode === 'quality' && performanceProfile.includesShader,
     menuModInstalled: settings.loader === 'fabric' && settings.gameVersion === GAME_VERSION
       && mods.some((mod) => mod.name === `westron-client-skin-${RELEASE_VERSION}.jar`),
   };
@@ -665,7 +701,7 @@ async function installBundledMenu(minecraftDir) {
     await fs.access(sourcePath);
   } catch (error) {
     if (error.code === 'ENOENT') {
-      throw new Error('Westron Client bulunamadı. Önce `npm run build:mod` komutunu çalıştırın.');
+      throw new Error('Westron Launcher bulunamadı. Önce `npm run build:mod` komutunu çalıştırın.');
     }
     throw error;
   }
@@ -807,7 +843,7 @@ async function installFabric() {
     ]),
   });
   await installBundledMenu(state.gameDirectory);
-  return `Fabric ${state.gameVersion} ve Westron Client kuruldu.`;
+  return `Fabric ${state.gameVersion} ve Westron Launcher kuruldu.`;
 }
 
 function sendInstallProgress(snapshot) {
@@ -837,12 +873,14 @@ async function launchGame({ mode, offlineUsername }) {
 
   const composition = await kit.launch.compose(target, {
     auth: microsoftSession?.auth ?? { mode: AuthModes.OFFLINE, username },
-    launcherName: 'Westron Client',
+    launcherName: 'Westron Launcher',
     launcherVersion: app.getVersion(),
   });
   const session = kit.launch.run(composition);
+  activeGameSessions.add(session);
   const gameBehavior = settings.gameBehavior;
   session.exited.then((exit) => {
+    activeGameSessions.delete(session);
     if (exit.code !== 0 && !exit.aborted) {
       console.error(`Minecraft ${username} oturumuyla ${exit.code ?? exit.signal} koduyla kapandı.`);
     }
@@ -898,9 +936,12 @@ async function assertKnownMinecraftVersion(gameVersion) {
   }
 }
 
-async function searchModrinth(type, query, gameVersion, loader) {
+async function searchModrinth(type, query, gameVersion, loader, offset = 0) {
   assertModrinthType(type);
   await assertKnownMinecraftVersion(gameVersion);
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error('Arama sonuçlarının sayfa konumu geçersiz.');
+  }
   if (type === 'mod' && !['fabric', 'forge'].includes(loader)) {
     throw new Error('Mod aramak ve kurmak için Fabric veya Forge seçin.');
   }
@@ -911,6 +952,7 @@ async function searchModrinth(type, query, gameVersion, loader) {
     query,
     facets: JSON.stringify(facets),
     limit: '18',
+    offset: String(offset),
     index: 'downloads',
   });
   const response = await fetch(`https://api.modrinth.com/v2/search?${params}`, {
@@ -919,8 +961,10 @@ async function searchModrinth(type, query, gameVersion, loader) {
   });
   if (!response.ok) throw new Error(`Modrinth araması başarısız oldu (${response.status}).`);
   const data = await response.json();
-  if (!Array.isArray(data.hits)) throw new Error('Modrinth arama sonucu beklenen biçimde değil.');
-  return data.hits.map((hit) => ({
+  if (!Array.isArray(data.hits) || !Number.isSafeInteger(data.total_hits) || data.total_hits < 0) {
+    throw new Error('Modrinth arama sonucu beklenen biçimde değil.');
+  }
+  const projects = data.hits.map((hit) => ({
     id: hit.project_id,
     slug: hit.slug,
     title: hit.title,
@@ -929,6 +973,7 @@ async function searchModrinth(type, query, gameVersion, loader) {
     downloads: hit.downloads,
     categories: hit.categories,
   }));
+  return { projects, totalHits: data.total_hits, offset };
 }
 
 async function getProjectVersions(projectId, type = 'mod', gameVersion = GAME_VERSION, loader = DEFAULT_LOADER) {
@@ -1141,9 +1186,105 @@ async function installMod(projectId, gameVersion, loader, selectedVersionId = nu
   return {
     status: 'installed',
     files: installedFiles,
+    projectIds: [...new Set(filesToInstall.map((item) => item.projectId))],
+    managedFiles: filesToInstall.map(({ file, projectId }) => ({ projectId, fileName: file.filename })),
     cancelled: false,
     dependencies: requiredMods.map((item) => item.title),
   };
+}
+
+async function installPerformanceProject(project, gameVersion, loader) {
+  let result = await installMod(project.id, gameVersion, loader);
+  if (result.status === 'confirmation-required') {
+    result = await installMod(
+      project.id,
+      gameVersion,
+      loader,
+      null,
+      result.dependencies.map((dependency) => dependency.projectId),
+    );
+  }
+  if (result.status !== 'installed') throw new Error(`"${project.title}" kurulumu tamamlanamadı.`);
+  return result;
+}
+
+async function installPerformancePreset(mode, includeShader) {
+  if (!['default', 'performance', 'quality'].includes(mode) || typeof includeShader !== 'boolean') {
+    throw new Error('Westron Launcher modu seçimi geçersiz.');
+  }
+  if (includeShader && mode !== 'quality') {
+    throw new Error('Shader yalnızca Ultra Kalite modunda etkinleştirilebilir.');
+  }
+  const state = await getState();
+  if (state.gameRunning) return { installed: [], skipped: [], blocked: 'game-running' };
+
+  const previousProfile = await readPerformanceProfile(state.gameDirectory);
+  if (mode === 'default') {
+    await removePerformanceManagedFiles(state.gameDirectory, previousProfile.managedFiles);
+    await writePerformanceProfile(state.gameDirectory, defaultPerformanceProfile());
+    return { installed: [], skipped: [] };
+  }
+  if (!['fabric', 'forge'].includes(state.loader)) {
+    throw new Error('Performans ve kalite modları için Fabric veya Forge seçin.');
+  }
+  if (includeShader && state.loader !== 'fabric') {
+    throw new Error('Shader yalnızca Fabric profillerinde kullanılabilir.');
+  }
+  if (!state.loaderInstalled) {
+    throw new Error(`Önce Minecraft ${state.gameVersion} ${state.loader} profilini kurun.`);
+  }
+
+  const modsDirectory = getModsDir(state.gameDirectory);
+  const shaderDirectory = getContentDirectory(state.gameDirectory, 'shader');
+  const existingModInstalls = await readInstallIndex(modsDirectory, '.jar');
+  const existingShaderInstalls = await readInstallIndex(shaderDirectory, '.zip');
+  const previouslyManaged = new Set(previousProfile.managedFiles.map((file) => `${file.type}:${file.projectId}`));
+  const nextManagedFiles = [];
+  const installed = [];
+  const skipped = [];
+  let irisAvailable = false;
+  let shaderEnabled = false;
+  const projects = getPerformancePresetProjects(mode);
+  if (mode === 'quality' && includeShader) projects.push(SHADER_LOADER);
+
+  for (const project of projects) {
+    try {
+      const result = await installPerformanceProject(project, state.gameVersion, state.loader);
+      installed.push(project.title);
+      if (project.id === SHADER_LOADER.id) irisAvailable = true;
+      for (const file of result.managedFiles) {
+        if (!existingModInstalls[file.projectId] || previouslyManaged.has(`mod:${file.projectId}`)) {
+          nextManagedFiles.push({ type: 'mod', ...file });
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof ModCompatibilityError)) throw error;
+      skipped.push(project.title);
+    }
+  }
+
+  if (mode === 'quality' && includeShader && irisAvailable) {
+    const result = await installModrinthPack('shader', QUALITY_SHADER.id, state.gameVersion, null);
+    installed.push(QUALITY_SHADER.title);
+    shaderEnabled = true;
+    if (!existingShaderInstalls[QUALITY_SHADER.id] || previouslyManaged.has(`shader:${QUALITY_SHADER.id}`)) {
+      nextManagedFiles.push({ type: 'shader', projectId: QUALITY_SHADER.id, fileName: result.fileName });
+    }
+  } else if (mode === 'quality' && includeShader) {
+    skipped.push(QUALITY_SHADER.title);
+  }
+
+  const uniqueManagedFiles = [...new Map(nextManagedFiles.map((file) => [`${file.type}:${file.projectId}`, file])).values()];
+  const retainedFiles = new Map(uniqueManagedFiles.map((file) => [`${file.type}:${file.projectId}`, file.fileName]));
+  const filesToRemove = previousProfile.managedFiles.filter((file) =>
+    retainedFiles.get(`${file.type}:${file.projectId}`) !== file.fileName);
+  await removePerformanceManagedFiles(state.gameDirectory, filesToRemove);
+  await writePerformanceProfile(state.gameDirectory, {
+    mode,
+    includesShader: shaderEnabled,
+    managedFiles: uniqueManagedFiles,
+  });
+  return { installed, skipped };
 }
 
 async function installModrinthPack(type, projectId, gameVersion, selectedVersionId) {
@@ -1171,6 +1312,8 @@ async function installModrinthPack(type, projectId, gameVersion, selectedVersion
   return {
     status: result.installed ? 'installed' : 'already-installed',
     fileName: result.fileName,
+    projectId,
+    managedFile: { projectId, fileName: result.fileName },
     versionNumber: version.version_number,
   };
 }
@@ -1181,12 +1324,13 @@ function createWindow() {
     height: 900,
     minWidth: 1080,
     minHeight: 720,
+    frame: false,
     backgroundColor: '#0b0d11',
-    title: 'Westron Client',
+    title: 'Westron Launcher',
     icon: process.platform === 'win32'
       ? (app.isPackaged
-        ? path.join(process.resourcesPath, 'westron-client.ico')
-        : path.join(__dirname, '..', 'build', 'westron-client.ico'))
+        ? path.join(process.resourcesPath, 'westron-launcher.ico')
+        : path.join(__dirname, '..', 'build', 'westron-launcher.ico'))
       : undefined,
     autoHideMenuBar: true,
     webPreferences: {
@@ -1230,15 +1374,39 @@ ipcMain.handle('app:microsoft-account', () => microsoftAuth.getAccount());
 ipcMain.handle('app:microsoft-sign-in', () => microsoftAuth.signIn());
 ipcMain.handle('app:microsoft-cancel-sign-in', () => microsoftAuth.cancelSignIn());
 ipcMain.handle('app:microsoft-sign-out', () => microsoftAuth.signOut());
+ipcMain.handle('app:window-control', (event, action) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) throw new Error('Uygulama penceresi artık kullanılamıyor.');
+  if (action === 'minimize') {
+    window.minimize();
+    return;
+  }
+  if (action === 'maximize') {
+    if (window.isMaximized()) window.unmaximize();
+    else window.maximize();
+    return;
+  }
+  if (action === 'close') {
+    window.close();
+    return;
+  }
+  throw new Error('Pencere işlemi geçersiz.');
+});
 ipcMain.handle('app:choose-minecraft-dir', async () => {
   const settings = await readSettings();
-  const result = await dialog.showOpenDialog({
-    title: 'Minecraft klasörünü seç',
-    defaultPath: settings.minecraftDir,
-    properties: ['openDirectory', 'createDirectory'],
-  });
-  if (result.canceled || !result.filePaths[0]) return getState();
-  await saveSettings({ ...settings, minecraftDir: result.filePaths[0] });
+  if (process.platform === 'win32') {
+    const targetMinecraftDir = getDefaultMinecraftDir();
+    await fs.mkdir(path.join(targetMinecraftDir, 'westron-profiles'), { recursive: true });
+    await saveSettings({ ...settings, minecraftDir: targetMinecraftDir });
+  } else {
+    const result = await dialog.showOpenDialog({
+      title: 'Minecraft klasörünü seç',
+      defaultPath: settings.minecraftDir,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths[0]) return getState();
+    await saveSettings({ ...settings, minecraftDir: result.filePaths[0] });
+  }
   return getState();
 });
 ipcMain.handle('app:open-profiles-folder', async () => {
@@ -1250,7 +1418,7 @@ ipcMain.handle('app:open-profiles-folder', async () => {
 });
 ipcMain.handle('app:save-game-behavior', async (_event, behavior) => {
   if (!['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(behavior)) {
-    throw new Error('Westron Client davranışı geçersiz.');
+    throw new Error('Westron Launcher davranışı geçersiz.');
   }
   const settings = await readSettings();
   await saveSettings({ ...settings, gameBehavior: behavior });
@@ -1309,15 +1477,15 @@ ipcMain.handle('app:install-menu', async () => {
     throw new Error('Westron oyun içi menüsü yalnızca Minecraft 26.3 Fabric profilinde kullanılabilir.');
   }
   await installBundledMenu(state.gameDirectory);
-  return 'Westron Client kuruldu.';
+  return 'Westron Launcher kuruldu.';
 });
-ipcMain.handle('app:search-mods', async (_event, query) => {
+ipcMain.handle('app:search-mods', async (_event, query, offset = 0) => {
   const state = await getState();
-  return searchModrinth('mod', String(query || '').slice(0, 100), state.gameVersion, state.loader);
+  return searchModrinth('mod', String(query || '').slice(0, 100), state.gameVersion, state.loader, offset);
 });
-ipcMain.handle('app:search-content', async (_event, type, query) => {
+ipcMain.handle('app:search-content', async (_event, type, query, offset = 0) => {
   const state = await getState();
-  return searchModrinth(String(type), String(query || '').slice(0, 100), state.gameVersion, state.loader);
+  return searchModrinth(String(type), String(query || '').slice(0, 100), state.gameVersion, state.loader, offset);
 });
 ipcMain.handle('app:project-versions', async (_event, type, projectId) => {
   const state = await getState();
@@ -1338,23 +1506,33 @@ ipcMain.handle('app:project-versions', async (_event, type, projectId) => {
 });
 ipcMain.handle('app:install-mod', async (_event, projectId, selectedVersionId, confirmedDependencyIds) => {
   const state = await getState();
-  return installMod(
+  const result = await installMod(
     String(projectId),
     state.gameVersion,
     state.loader,
     typeof selectedVersionId === 'string' ? selectedVersionId : null,
     confirmedDependencyIds,
   );
+  if (result.status === 'installed') {
+    await forgetPerformanceProjects(state.gameDirectory, result.projectIds);
+  }
+  return result;
 });
 ipcMain.handle('app:install-content', async (_event, type, projectId, selectedVersionId) => {
   const state = await getState();
-  return installModrinthPack(
+  const result = await installModrinthPack(
     String(type),
     String(projectId),
     state.gameVersion,
     typeof selectedVersionId === 'string' ? selectedVersionId : null,
   );
+  if (type === 'shader') {
+    await forgetPerformanceProjects(state.gameDirectory, [String(projectId)], 'shader');
+  }
+  return result;
 });
+ipcMain.handle('app:install-performance-preset', (_event, mode, includeShader) =>
+  installPerformancePreset(mode, includeShader));
 ipcMain.handle('app:update-status', () => updateStatus);
 ipcMain.handle('app:check-for-updates', checkForUpdates);
 ipcMain.handle('app:download-update', downloadUpdate);
@@ -1365,7 +1543,7 @@ ipcMain.handle('app:publish-update', async () => {
     throw new Error('Güncelleme yayımlamak için doğrulanmış yayıncı Westron hesabıyla giriş yapın.');
   }
   const result = await dialog.showOpenDialog({
-    title: 'Derlenmiş Westron Client sürüm klasörünü seç',
+    title: 'Derlenmiş Westron Launcher sürüm klasörünü seç',
     defaultPath: path.join(__dirname, '..', 'release'),
     properties: ['openDirectory'],
   });
@@ -1405,6 +1583,14 @@ ipcMain.handle('app:list-screenshots', async () => {
     if (image.isEmpty()) return '';
     return image.resize({ width: 640, height: 360, quality: 'best' }).toDataURL();
   });
+});
+ipcMain.handle('app:list-screenshots-page', async (_event, offset, limit) => {
+  const { gameDirectory } = await getState();
+  return listScreenshots(gameDirectory, (filePath) => {
+    const image = nativeImage.createFromPath(filePath);
+    if (image.isEmpty()) return '';
+    return image.resize({ width: 640, height: 360, quality: 'best' }).toDataURL();
+  }, { offset, limit });
 });
 ipcMain.handle('app:read-screenshot', async (_event, fileName) => {
   const { gameDirectory } = await getState();

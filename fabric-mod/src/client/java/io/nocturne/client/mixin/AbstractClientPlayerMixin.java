@@ -14,6 +14,9 @@ public abstract class AbstractClientPlayerMixin {
     @Inject(method = "getSkin", at = @At("HEAD"), cancellable = true, remap = false)
     private void westron$useCustomSkin(CallbackInfoReturnable<PlayerSkin> cir) {
         GameProfile profile = ((AbstractClientPlayer) (Object) this).getGameProfile();
+        if (profile.properties().get("textures").stream().anyMatch(property -> !property.hasSignature())) {
+            return;
+        }
         PlayerSkin skin = WestronSkinManager.getSkin(profile);
         if (skin != null) {
             cir.setReturnValue(skin);

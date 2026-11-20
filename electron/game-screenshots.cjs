@@ -14,36 +14,42 @@ function resolveScreenshotPath(gameDirectory, fileName) {
   return path.join(getScreenshotsDirectory(gameDirectory), fileName);
 }
 
-async function listScreenshots(gameDirectory, createPreview) {
+async function listScreenshots(gameDirectory, createPreview, { offset = 0, limit = 12 } = {}) {
   if (typeof createPreview !== 'function') {
     throw new Error('Ekran görüntüsü önizlemesi oluşturulamıyor.');
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0
+    || !Number.isSafeInteger(limit) || limit < 1 || limit > 24) {
+    throw new Error('Ekran görüntüsü sayfası geçersiz.');
   }
   const directory = getScreenshotsDirectory(gameDirectory);
   let entries;
   try {
     entries = await fs.readdir(directory, { withFileTypes: true });
   } catch (error) {
-    if (error.code === 'ENOENT') return [];
+    if (error.code === 'ENOENT') return { items: [], total: 0 };
     throw error;
   }
 
-  const screenshots = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.png')) continue;
-    const filePath = resolveScreenshotPath(gameDirectory, entry.name);
-    const info = await fs.stat(filePath);
-    const preview = createPreview(filePath);
+  const screenshots = (await Promise.all(entries
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.png'))
+    .map(async (entry) => {
+      const info = await fs.stat(resolveScreenshotPath(gameDirectory, entry.name));
+      return {
+        name: entry.name,
+        size: info.size,
+        modifiedAt: info.mtime.toISOString(),
+      };
+    })))
+    .sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
+  const page = screenshots.slice(offset, offset + limit).map((screenshot) => {
+    const preview = createPreview(resolveScreenshotPath(gameDirectory, screenshot.name));
     if (typeof preview !== 'string' || !preview.startsWith('data:image/')) {
-      throw new Error(`Ekran görüntüsü önizlemesi oluşturulamadı: ${entry.name}`);
+      throw new Error(`Ekran görüntüsü önizlemesi oluşturulamadı: ${screenshot.name}`);
     }
-    screenshots.push({
-      name: entry.name,
-      size: info.size,
-      modifiedAt: info.mtime.toISOString(),
-      preview,
-    });
-  }
-  return screenshots.sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
+    return { ...screenshot, preview };
+  });
+  return { items: page, total: screenshots.length };
 }
 
 async function deleteScreenshot(gameDirectory, fileName) {

@@ -38,7 +38,7 @@ function createUpdateManifest(installerName, installerContents) {
 }
 
 async function readUpdateFiles(directory) {
-  const installerName = `Westron-Client-Setup-${packageJson.version}.exe`;
+  const installerName = `Westron-Launcher-Setup-${packageJson.version}.exe`;
   const blockmapName = `${installerName}.blockmap`;
   const [installerContents, blockmapContents, manifestContents] = await Promise.all([
     readIfPresent(path.join(directory, installerName)),
@@ -60,7 +60,7 @@ async function readUpdateFiles(directory) {
   }
   const manifest = manifestContents.toString('utf8');
   const version = manifest.match(/^version:\s*(\d+\.\d+\.\d+)\s*$/m)?.[1];
-  const fileName = manifest.match(/^  - url:\s*(Westron-Client-Setup-\d+\.\d+\.\d+\.exe)\s*$/m)?.[1];
+  const fileName = manifest.match(/^  - url:\s*(Westron-Launcher-Setup-\d+\.\d+\.\d+\.exe)\s*$/m)?.[1];
   const sha512 = manifest.match(/^    sha512:\s*([A-Za-z0-9+/=]+)\s*$/m)?.[1];
   const actualHash = createHash('sha512').update(installerContents).digest('base64');
   const verifiedManifest = version === packageJson.version

@@ -10,12 +10,12 @@
       "dmg",
       "zip"
     ],
-    "artifactName": "Westron Client-${version}-${arch}.${ext}"
+    "artifactName": "Westron Launcher-${version}-${arch}.${ext}"
   },
   "extraResources": [
     {
-      "from": "fabric-mod/build/libs/westron-client-skin-1.0.2.jar",
-      "to": "westron-client-skin-1.0.2.jar"
+      "from": "fabric-mod/build/libs/westron-client-skin-1.0.3.jar",
+      "to": "westron-client-skin-1.0.3.jar"
     }
   ]
 }

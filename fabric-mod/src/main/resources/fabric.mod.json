@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "nocturne_menu",
   "version": "${version}",
-  "name": "Westron Client",
-  "description": "Client-side Westron Client integration.",
-  "authors": ["Westron Client"],
+  "name": "Westron Launcher",
+  "description": "Client-side Westron Launcher integration.",
+  "authors": ["Westron Launcher"],
   "license": "MIT",
   "environment": "client",
   "entrypoints": {

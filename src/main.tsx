@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import './styles.css';
@@ -19,9 +19,9 @@ class AppErrorBoundary extends React.Component<React.PropsWithChildren, { error:
       return (
         <main className="renderer-error" role="alert">
           <div className="renderer-error-card">
-            <div className="eyebrow">WESTRON CLIENT</div>
-            <h1>Arayüz yüklenemedi</h1>
-            <p>Başlangıç sırasında bir hata oluştu. Uygulamayı yeniden başlatın.</p>
+            <div className="eyebrow">WSTRON LAUNCHER</div>
+            <h1>ArayÃ¼z yÃ¼klenemedi</h1>
+            <p>BaÅŸlangÄ±Ã§ sÄ±rasÄ±nda bir hata oluÅŸtu. UygulamayÄ± yeniden baÅŸlatÄ±n.</p>
             <code>{this.state.error.message}</code>
           </div>
         </main>

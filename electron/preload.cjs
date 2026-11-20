@@ -18,6 +18,7 @@ const WESTRON_IPC_CHANNELS = Object.freeze({
 
 contextBridge.exposeInMainWorld('nocturne', {
   getState: () => ipcRenderer.invoke('app:state'),
+  controlWindow: (action) => ipcRenderer.invoke('app:window-control', action),
   chooseMinecraftDir: () => ipcRenderer.invoke('app:choose-minecraft-dir'),
   getGameVersions: () => ipcRenderer.invoke('app:game-versions'),
   saveGameOptions: (gameVersion, loader, confirmNewProfile, dismissNotice) =>
@@ -55,15 +56,19 @@ contextBridge.exposeInMainWorld('nocturne', {
     return () => ipcRenderer.removeListener('app:install-progress', listener);
   },
   installMenu: () => ipcRenderer.invoke('app:install-menu'),
-  searchMods: (query) => ipcRenderer.invoke('app:search-mods', query),
-  searchContent: (type, query) => ipcRenderer.invoke('app:search-content', type, query),
+  searchMods: (query, offset = 0) => ipcRenderer.invoke('app:search-mods', query, offset),
+  searchContent: (type, query, offset = 0) => ipcRenderer.invoke('app:search-content', type, query, offset),
   getProjectVersions: (type, projectId) => ipcRenderer.invoke('app:project-versions', type, projectId),
-  installMod: (projectId, confirmedDependencyIds) =>
-    ipcRenderer.invoke('app:install-mod', projectId, null, confirmedDependencyIds),
-  installModVersion: (projectId, selectedVersionId, confirmedDependencyIds) =>
-    ipcRenderer.invoke('app:install-mod', projectId, selectedVersionId, confirmedDependencyIds),
-  installContent: (type, projectId, selectedVersionId) =>
-    ipcRenderer.invoke('app:install-content', type, projectId, selectedVersionId),
+  getProjectIcons: (projectIds) => ipcRenderer.invoke('app:project-icons', projectIds),
+  getModArchiveMetadata: (fileNames) => ipcRenderer.invoke('app:mod-archive-metadata', fileNames),
+  installMod: (projectId, confirmedDependencyIds, forceReinstall = false) =>
+    ipcRenderer.invoke('app:install-mod', projectId, null, confirmedDependencyIds, forceReinstall),
+  installModVersion: (projectId, selectedVersionId, confirmedDependencyIds, forceReinstall = false) =>
+    ipcRenderer.invoke('app:install-mod', projectId, selectedVersionId, confirmedDependencyIds, forceReinstall),
+  installContent: (type, projectId, selectedVersionId, forceReinstall = false) =>
+    ipcRenderer.invoke('app:install-content', type, projectId, selectedVersionId, forceReinstall),
+  installPerformancePreset: (mode, includeShader) =>
+    ipcRenderer.invoke('app:install-performance-preset', mode, includeShader),
   removeMod: (fileName) => ipcRenderer.invoke('app:remove-mod', fileName),
   removeContent: (type, fileName) => ipcRenderer.invoke('app:remove-content', type, fileName),
   getUpdateStatus: () => ipcRenderer.invoke('app:update-status'),
@@ -81,6 +86,7 @@ contextBridge.exposeInMainWorld('nocturne', {
   saveGameBehavior: (behavior) => ipcRenderer.invoke('app:save-game-behavior', behavior),
   publishUpdate: () => ipcRenderer.invoke('app:publish-update'),
   listScreenshots: () => ipcRenderer.invoke('app:list-screenshots'),
+  listScreenshotsPage: (offset, limit) => ipcRenderer.invoke('app:list-screenshots-page', offset, limit),
   readScreenshot: (fileName) => ipcRenderer.invoke('app:read-screenshot', fileName),
   deleteScreenshot: (fileName) => ipcRenderer.invoke('app:delete-screenshot', fileName),
   openScreenshotsFolder: () => ipcRenderer.invoke('app:open-screenshots-folder'),

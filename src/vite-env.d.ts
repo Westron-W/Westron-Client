@@ -6,6 +6,7 @@ type GameBehavior = 'close-on-game-exit' | 'stay-open' | 'hide-and-restore';
 
 interface LauncherState {
   minecraftDir: string;
+  platform: NodeJS.Platform;
   offlineUsername: string;
   version: string;
   displayVersion: string;
@@ -13,6 +14,7 @@ interface LauncherState {
   gameVersion: string;
   loader: 'vanilla' | 'fabric' | 'forge';
   gameDirectory: string;
+  gameRunning: boolean;
   loaderInstalled: boolean;
   fabricInstalled: boolean;
   westronModSupported: boolean;
@@ -22,9 +24,11 @@ interface LauncherState {
   languageSetupComplete: boolean;
   menuModInstalled: boolean;
   javaAvailable: string;
-  mods: { name: string; size: number }[];
-  resourcePacks: { name: string; size: number }[];
-  shaderPacks: { name: string; size: number }[];
+  mods: { name: string; size: number; projectId?: string }[];
+  resourcePacks: { name: string; size: number; projectId?: string }[];
+  shaderPacks: { name: string; size: number; projectId?: string }[];
+  performanceMode: 'default' | 'performance' | 'quality';
+  performanceShaderEnabled: boolean;
   modrinthModProjects: string[];
   resourcePackProjects: string[];
   shaderProjects: string[];
@@ -47,6 +51,11 @@ interface GameScreenshot {
   size: number;
   modifiedAt: string;
   preview: string;
+}
+
+interface GameScreenshotPage {
+  items: GameScreenshot[];
+  total: number;
 }
 
 interface MicrosoftAccount {
@@ -77,11 +86,20 @@ interface ModDependency {
 
 type ModInstallResult =
   | { status: 'confirmation-required'; dependencies: ModDependency[] }
-  | { status: 'installed'; files: string[]; cancelled: false; dependencies: string[] };
+  | {
+      status: 'installed';
+      files: string[];
+      projectIds: string[];
+      managedFiles: { projectId: string; fileName: string }[];
+      cancelled: false;
+      dependencies: string[];
+    };
 
 interface ModrinthPackInstallResult {
   status: 'installed' | 'already-installed';
   fileName: string;
+  projectId: string;
+  managedFile: { projectId: string; fileName: string } | null;
   versionNumber: string;
 }
 
@@ -93,6 +111,17 @@ interface ModrinthProject {
   iconUrl: string;
   downloads: number;
   categories: string[];
+}
+
+interface ModArchiveMetadata {
+  iconUrl: string;
+  description: string;
+}
+
+interface ModrinthSearchPage {
+  projects: ModrinthProject[];
+  totalHits: number;
+  offset: number;
 }
 
 interface ModrinthVersionOption {
@@ -131,6 +160,7 @@ interface WestronProfile {
 interface Window {
   nocturne: {
     getState: () => Promise<LauncherState>;
+    controlWindow: (action: 'minimize' | 'maximize' | 'close') => Promise<void>;
     chooseMinecraftDir: () => Promise<LauncherState>;
     getGameVersions: () => Promise<MinecraftVersionOption[]>;
     saveGameOptions: (
@@ -165,12 +195,28 @@ interface Window {
     onGameExit: (callback: (result: GameExit) => void) => () => void;
     onInstallProgress: (callback: (progress: InstallProgress) => void) => () => void;
     installMenu: () => Promise<string>;
-    searchMods: (query: string) => Promise<ModrinthProject[]>;
-    searchContent: (type: 'resourcepack' | 'shader', query: string) => Promise<ModrinthProject[]>;
+    searchMods: (query: string, offset?: number) => Promise<ModrinthSearchPage>;
+    searchContent: (type: 'resourcepack' | 'shader', query: string, offset?: number) => Promise<ModrinthSearchPage>;
     getProjectVersions: (type: 'mod' | 'resourcepack' | 'shader', projectId: string) => Promise<ModrinthVersionOption[]>;
-    installMod: (projectId: string, confirmedDependencyIds?: string[]) => Promise<ModInstallResult>;
-    installModVersion: (projectId: string, selectedVersionId: string, confirmedDependencyIds?: string[]) => Promise<ModInstallResult>;
-    installContent: (type: 'resourcepack' | 'shader', projectId: string, selectedVersionId?: string) => Promise<ModrinthPackInstallResult>;
+    getProjectIcons: (projectIds: string[]) => Promise<Record<string, string>>;
+    getModArchiveMetadata: (fileNames: string[]) => Promise<Record<string, ModArchiveMetadata>>;
+    installMod: (projectId: string, confirmedDependencyIds?: string[], forceReinstall?: boolean) => Promise<ModInstallResult>;
+    installModVersion: (
+      projectId: string,
+      selectedVersionId: string,
+      confirmedDependencyIds?: string[],
+      forceReinstall?: boolean,
+    ) => Promise<ModInstallResult>;
+    installContent: (
+      type: 'resourcepack' | 'shader',
+      projectId: string,
+      selectedVersionId?: string,
+      forceReinstall?: boolean,
+    ) => Promise<ModrinthPackInstallResult>;
+    installPerformancePreset: (
+      mode: 'default' | 'performance' | 'quality',
+      includeShader: boolean,
+    ) => Promise<{ installed: string[]; skipped: string[]; blocked?: 'game-running' }>;
     removeMod: (fileName: string) => Promise<LauncherState>;
     removeContent: (type: 'resourcepack' | 'shader', fileName: string) => Promise<LauncherState>;
     getUpdateStatus: () => Promise<UpdateStatus>;
@@ -183,7 +229,8 @@ interface Window {
     openProfilesFolder: () => Promise<void>;
     saveGameBehavior: (behavior: GameBehavior) => Promise<LauncherState>;
     publishUpdate: () => Promise<{ cancelled: boolean; version?: string }>;
-    listScreenshots: () => Promise<GameScreenshot[]>;
+    listScreenshots: () => Promise<GameScreenshotPage>;
+    listScreenshotsPage: (offset: number, limit: number) => Promise<GameScreenshotPage>;
     readScreenshot: (fileName: string) => Promise<string>;
     deleteScreenshot: (fileName: string) => Promise<void>;
     openScreenshotsFolder: () => Promise<void>;

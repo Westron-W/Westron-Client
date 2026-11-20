@@ -34,6 +34,7 @@ beforeEach(async () => {
       NODE_ENV: 'test',
       DATA_DIR: dataDir,
       PUBLIC_BASE_URL: 'https://westronskin.example.test',
+      UPDATE_PUBLISHER_EMAIL: 'regular@example.test',
       RATE_LIMIT_MAX: '1000',
       AUTH_RATE_LIMIT_MAX: '1000',
     },
@@ -260,7 +261,7 @@ test('links Minecraft names to Westron profiles for public skin and cape lookup'
   assert.equal(usernameCollision.statusCode, 409);
 });
 
-test('only the verified update publisher can upload a hash-matched release feed', async () => {
+test('only the fixed verified publisher can upload releases, regardless of environment overrides', async () => {
   const owner = await createAccount('ReleaseOwner', 'ermiscaner78@gmail.com');
   const otherAccount = await createAccount('RegularUpdater', 'regular@example.test');
   const installer = Buffer.from('test installer payload');
@@ -370,6 +371,7 @@ test('password reset is one-time and revokes all existing sessions', async () =>
   });
   assert.equal(request.statusCode, 200);
   const token = mailTokens.reset[0];
+  assert.match(token, /^\d{6}$/);
   const reset = await app.inject({
     method: 'POST',
     url: '/api/v1/auth/reset-password',
