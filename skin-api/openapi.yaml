@@ -48,14 +48,14 @@ paths:
     get:
       operationId: downloadUpdateAsset
       tags: [updates]
-      summary: Download a public Westron Client update feed file.
+      summary: Download a public Westron Launcher update feed file.
       parameters:
         - name: filename
           in: path
           required: true
           schema:
             type: string
-            pattern: "^(latest\\.yml|(?:Westron-Client-Setup-|Westron Client Setup )(\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
+            pattern: "^(latest\\.yml|(?:Westron-Launcher-Setup-|Westron-Client-Setup-|Westron Client Setup )(\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
       responses:
         "200":
           description: Update manifest, Windows installer or blockmap file.
@@ -81,7 +81,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^(latest\\.yml|(?:Westron-Client-Setup-|Westron Client Setup )(\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
+            pattern: "^(latest\\.yml|(?:Westron-Launcher-Setup-|Westron-Client-Setup-|Westron Client Setup )(\\d+\\.\\d+\\.\\d+|1\\.0)\\.exe(\\.blockmap)?)$"
       requestBody:
         required: true
         content:

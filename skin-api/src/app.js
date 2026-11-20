@@ -57,7 +57,7 @@ const errorResponse = {
 };
 
 function parsePositiveInteger(value, fallback, name) {
-  const parsed = Number(value ? fallback);
+  const parsed = Number(value || fallback);
   if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`${name} must be a positive integer`);
   return parsed;
 }
@@ -98,13 +98,13 @@ function validateCredentials(body) {
 
 function isUpdateAssetName(filename) {
   return filename === 'latest.yml'
-    || /^(?:Westron-Client-Setup-|Westron Client Setup )(?:\d+\.\d+\.\d+|1\.0)\.exe(?:\.blockmap)?$/.test(filename);
+    || /^(?:Westron-Launcher-Setup-|Westron-Client-Setup-|Westron Client Setup )(?:\d+\.\d+\.\d+|1\.0)\.exe(?:\.blockmap)?$/.test(filename);
 }
 
 function parseUpdateManifest(buffer) {
   const manifest = buffer.toString('utf8');
   const version = manifest.match(/^version:\s*(\d+\.\d+\.\d+)\s*$/m)?.[1];
-  const fileNameMatch = manifest.match(/^  - url:\s*((?:Westron-Client-Setup-|Westron Client Setup )(\d+\.\d+\.\d+|1\.0)\.exe)\s*$/m);
+  const fileNameMatch = manifest.match(/^  - url:\s*((?:Westron-Launcher-Setup-|Westron-Client-Setup-|Westron Client Setup )(\d+\.\d+\.\d+|1\.0)\.exe)\s*$/m);
   const fileName = fileNameMatch?.[1];
   const fileVersion = fileNameMatch?.[2];
   const sha512 = manifest.match(/^    sha512:\s*([A-Za-z0-9+/=]+)\s*$/m)?.[1];

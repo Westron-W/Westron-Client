@@ -155,6 +155,8 @@ test('health, OpenAPI document and implemented routes are available', async () =
   assert.equal(document.openapi, '3.1.0');
   assert.equal(document.paths['/updates/{filename}']?.get?.operationId, 'downloadUpdateAsset');
   assert.equal(document.paths['/api/v1/admin/updates/{filename}']?.post?.operationId, 'publishUpdateAsset');
+  assert.match(document.paths['/updates/{filename}'].get.parameters[0].schema.pattern, /Westron-Launcher-Setup-/);
+  assert.match(document.paths['/api/v1/admin/updates/{filename}'].post.parameters[0].schema.pattern, /Westron-Launcher-Setup-/);
   assert.ok(document.components.schemas.Profile.required.includes('cape'));
   assert.ok(document.components.requestBodies.CapePng.content['multipart/form-data'].schema.required.includes('cape'));
   const resendOperation = document.paths['/api/v1/auth/resend-verification']?.post;
@@ -302,6 +304,38 @@ test('only the fixed verified publisher can upload releases, regardless of envir
   assert.equal(downloadedInstaller.statusCode, 200);
   assert.equal(downloadedInstaller.rawPayload.toString(), installer.toString());
   assert.equal((await app.inject({ method: 'GET', url: '/updates/../../schema.sql' })).statusCode, 404);
+});
+
+test('publishes and serves launcher-named update assets', async () => {
+  const owner = await createAccount('LauncherOwner', 'ermiscaner78@gmail.com');
+  const filename = 'Westron-Launcher-Setup-1.0.3.exe';
+  const installer = Buffer.from('launcher installer payload');
+  const hash = createHash('sha512').update(installer).digest('base64');
+  const manifest = Buffer.from([
+    'version: 1.0.3',
+    'files:',
+    `  - url: ${filename}`,
+    `    sha512: ${hash}`,
+    `    size: ${installer.length}`,
+    `path: ${filename}`,
+    `sha512: ${hash}`,
+    '',
+  ].join('\n'));
+  const upload = (fileName, contents) => app.inject({
+    method: 'POST',
+    url: `/api/v1/admin/updates/${encodeURIComponent(fileName)}`,
+    headers: { ...bearer(owner.accessToken), 'content-type': 'application/vnd.westron.update' },
+    payload: contents,
+  });
+
+  assert.equal((await upload(filename, installer)).statusCode, 200);
+  assert.equal((await upload(`${filename}.blockmap`, Buffer.from('launcher blockmap'))).statusCode, 200);
+  const published = await upload('latest.yml', manifest);
+  assert.equal(published.statusCode, 200, published.body);
+
+  const downloadedInstaller = await app.inject({ method: 'GET', url: `/updates/${encodeURIComponent(filename)}` });
+  assert.equal(downloadedInstaller.statusCode, 200);
+  assert.equal(downloadedInstaller.rawPayload.toString(), installer.toString());
 });
 
 test('registration requires one-time email verification and login stores Argon2id credentials', async () => {
