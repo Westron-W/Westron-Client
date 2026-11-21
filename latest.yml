@@ -1,0 +1,8 @@
+version: 1.0.3
+files:
+  - url: https://github.com/Westron-W/Westron-Client/releases/download/v1.0.3/Windows-Westron-Launcher-Setup-1.0.3.exe
+    sha512: JhdJpHKDCc7GWc4niK+/9Q6AhhUGvxd1obmJLUMU9kStsTTEW+7kCsM1dCVBhm994+Peq9kv7tFDBI0h/6REWw==
+    size: 118363737
+path: Westron-Launcher-Setup-1.0.3.exe
+sha512: JhdJpHKDCc7GWc4niK+/9Q6AhhUGvxd1obmJLUMU9kStsTTEW+7kCsM1dCVBhm994+Peq9kv7tFDBI0h/6REWw==
+releaseDate: '2026-11-21T11:41:35.980Z'
