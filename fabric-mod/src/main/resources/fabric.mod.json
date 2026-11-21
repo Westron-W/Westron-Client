@@ -5,6 +5,7 @@
   "name": "Westron Launcher",
   "description": "Client-side Westron Launcher integration.",
   "authors": ["Westron Launcher"],
+  "icon": "assets/westron-launcher/icon.png",
   "license": "MIT",
   "environment": "client",
   "entrypoints": {

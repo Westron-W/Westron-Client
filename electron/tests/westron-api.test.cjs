@@ -153,6 +153,17 @@ test('launcher IPC resend channel forwards one POST to the API route without dup
     uploadSkin: async () => {},
     deleteSkin: async () => 'Skin kaldırıldı.',
     logout: async () => {},
+    listFriends: async () => ({}),
+    sendFriendRequest: async () => ({}),
+    respondFriendRequest: async () => ({}),
+    removeFriend: async () => ({}),
+    updatePresence: async () => ({}),
+    sendEphemeralMessage: async () => ({}),
+    listEphemeralMessages: async () => [],
+    consumeEphemeralMessage: async () => ({}),
+    getVoiceCallIceServers: async () => ({}),
+    sendVoiceCallSignal: async () => ({}),
+    consumeVoiceCallSignals: async () => [],
   });
 
   const channelHandler = registeredHandlers.get(WESTRON_IPC_CHANNELS.resendVerification);
@@ -169,7 +180,7 @@ test('launcher IPC resend channel forwards one POST to the API route without dup
   assert.equal(await deleteSkinHandler({}), 'Skin kaldırıldı.');
 
   const preload = await readFile(path.join(__dirname, '..', 'preload.cjs'), 'utf8');
-  assert.match(preload, /resendWestronVerification:\s*\(input\)\s*=>\s*ipcRenderer\.invoke\(WESTRON_IPC_CHANNELS\.resendVerification,\s*input\)/);
+  assert.match(preload, /resendWestronVerification:\s*\(input\)\s*=>\s*invokeWestron\(WESTRON_IPC_CHANNELS\.resendVerification,\s*input\)/);
   assert.doesNotMatch(preload, /require\(['"]\.\/|require\(['"]\.\.\/|require\(['"]electron\/remote/);
 
   const calls = [];
@@ -181,6 +192,9 @@ test('launcher IPC resend channel forwards one POST to the API route without dup
       ipcRenderer: {
         invoke: async (...args) => {
           calls.push(args);
+          if (args[0] === WESTRON_IPC_CHANNELS.consumeVoiceCallSignals) {
+            throw new Error(`Error invoking remote method '${args[0]}': Error: Westron Skin API uç noktası sunucuda bulunamadı (404)`);
+          }
           return 'IPC response';
         },
         on() {},
@@ -188,12 +202,73 @@ test('launcher IPC resend channel forwards one POST to the API route without dup
       },
     };
   };
-  vm.runInNewContext(preload, { require: sandboxRequire });
+  vm.runInNewContext(preload, { require: sandboxRequire, process: { platform: 'win32' } });
+  assert.equal(exposedBridge.platform, 'win32');
   assert.equal(await exposedBridge.resendWestronVerification({ email: 'pending@example.test' }), 'IPC response');
   assert.equal(calls[0][0], WESTRON_IPC_CHANNELS.resendVerification);
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0][1])), { email: 'pending@example.test' });
   await exposedBridge.deleteWestronSkin();
   assert.equal(calls[1][0], WESTRON_IPC_CHANNELS.deleteSkin);
+  await exposedBridge.listWestronFriends();
+  assert.equal(calls[2][0], WESTRON_IPC_CHANNELS.listFriends);
+  await assert.rejects(exposedBridge.consumeWestronVoiceCallSignals(), {
+    message: 'Westron Skin API uç noktası sunucuda bulunamadı (404)',
+  });
+  assert.equal(calls[3][0], WESTRON_IPC_CHANNELS.consumeVoiceCallSignals);
+});
+
+test('social API calls stay authenticated and use the friends endpoint contract', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  const token = 'westron-access-token';
+
+  await apiClient.listFriends(token);
+  await apiClient.sendFriendRequest('FriendName', token);
+  await apiClient.respondFriendRequest('request-id', true, token);
+  await apiClient.removeFriend('friend-id', token);
+  await apiClient.updatePresence(true, token);
+  await apiClient.sendEphemeralMessage('friend-id', 'Hello', token);
+  await apiClient.listEphemeralMessages(token);
+  await apiClient.consumeEphemeralMessage('message-id', token);
+  await apiClient.getVoiceCallIceServers(token);
+  await apiClient.sendVoiceCallSignal({
+    recipientUserId: 'friend-id',
+    callId: 'call-id',
+    type: 'offer',
+    sdp: 'v=0',
+  }, token);
+  await apiClient.consumeVoiceCallSignals(token);
+
+  assert.equal(requests.length, 11);
+  assert.ok(requests.every(({ init }) => init.headers.get('authorization') === `Bearer ${token}`));
+  assert.deepEqual(requests.map(({ url, init }) => [new URL(url).pathname, init.method || 'GET']), [
+    ['/api/v1/friends', 'GET'],
+    ['/api/v1/friends/requests', 'POST'],
+    ['/api/v1/friends/requests/request-id/respond', 'POST'],
+    ['/api/v1/friends/friend-id', 'DELETE'],
+    ['/api/v1/presence', 'POST'],
+    ['/api/v1/friends/messages', 'POST'],
+    ['/api/v1/friends/messages/inbox', 'GET'],
+    ['/api/v1/friends/messages/message-id/consume', 'POST'],
+    ['/api/v1/friends/calls/ice-servers', 'GET'],
+    ['/api/v1/friends/calls/signals', 'POST'],
+    ['/api/v1/friends/calls/signals', 'GET'],
+  ]);
+  assert.deepEqual(JSON.parse(requests[5].init.body), { recipientUserId: 'friend-id', body: 'Hello' });
+  assert.deepEqual(JSON.parse(requests[9].init.body), {
+    recipientUserId: 'friend-id',
+    callId: 'call-id',
+    type: 'offer',
+    sdp: 'v=0',
+  });
 });
 
 test('launcher explains missing API routes without confusing them with endpoint-specific 404 errors', async () => {

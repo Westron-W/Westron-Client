@@ -3,6 +3,24 @@
 type AppLanguage = 'tr' | 'en' | 'de' | 'fr' | 'es' | 'ru' | 'it';
 type AppTheme = 'dark' | 'light';
 type GameBehavior = 'close-on-game-exit' | 'stay-open' | 'hide-and-restore';
+type GameLoader = 'vanilla' | 'fabric' | 'forge';
+
+interface CustomGameProfile {
+  id: string;
+  name: string;
+  gameVersion: string;
+  loader: GameLoader;
+  memoryMb: number;
+  directory: string;
+}
+
+interface CustomGameProfileInput {
+  name: string;
+  gameVersion: string;
+  loader: GameLoader;
+  memoryMb: number;
+  directory?: string;
+}
 
 interface LauncherState {
   minecraftDir: string;
@@ -12,8 +30,11 @@ interface LauncherState {
   displayVersion: string;
   microsoftAuthConfigured: boolean;
   gameVersion: string;
-  loader: 'vanilla' | 'fabric' | 'forge';
+  loader: GameLoader;
   gameDirectory: string;
+  customProfiles: CustomGameProfile[];
+  selectedCustomProfileId: string | null;
+  maxCustomMemoryMb: number;
   gameRunning: boolean;
   loaderInstalled: boolean;
   fabricInstalled: boolean;
@@ -118,6 +139,12 @@ interface ModArchiveMetadata {
   description: string;
 }
 
+interface ModrinthProjectMetadata {
+  title: string;
+  iconUrl: string;
+  description: string;
+}
+
 interface ModrinthSearchPage {
   projects: ModrinthProject[];
   totalHits: number;
@@ -144,6 +171,57 @@ interface WestronAccount {
   emailVerified: boolean;
 }
 
+interface WestronFriend {
+  userId: string;
+  username: string;
+  online: boolean;
+  inGame: boolean;
+}
+
+interface WestronFriendRequest {
+  requestId: string;
+  userId: string;
+  username: string;
+  createdAt: string;
+}
+
+interface WestronFriendList {
+  friends: WestronFriend[];
+  incomingRequests: WestronFriendRequest[];
+  outgoingRequests: WestronFriendRequest[];
+}
+
+interface WestronEphemeralMessage {
+  messageId: string;
+  senderUserId: string;
+  senderUsername: string;
+  createdAt: string;
+}
+
+interface WestronConsumedEphemeralMessage {
+  senderUserId: string;
+  senderUsername: string;
+  body: string;
+  createdAt: string;
+}
+
+interface WestronIceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+type WestronCallSignalType = 'offer' | 'answer' | 'hangup' | 'reject';
+
+interface WestronCallSignal {
+  signalId: string;
+  fromUserId: string;
+  fromUsername: string;
+  callId: string;
+  type: WestronCallSignalType;
+  sdp: string;
+}
+
 interface WestronProfile {
   username: string;
   skin: null | {
@@ -159,16 +237,30 @@ interface WestronProfile {
 
 interface Window {
   nocturne: {
+    platform: NodeJS.Platform;
     getState: () => Promise<LauncherState>;
     controlWindow: (action: 'minimize' | 'maximize' | 'close') => Promise<void>;
     chooseMinecraftDir: () => Promise<LauncherState>;
     getGameVersions: () => Promise<MinecraftVersionOption[]>;
     saveGameOptions: (
       gameVersion: string,
-      loader: LauncherState['loader'],
+      loader: GameLoader,
       confirmNewProfile?: boolean,
       dismissNotice?: boolean,
     ) => Promise<{ requiresConfirmation: true; profileDirectory: string } | { requiresConfirmation: false; state: LauncherState }>;
+    chooseCustomProfileDirectory: () => Promise<string | null>;
+    selectCustomProfile: (profileId: string | null) => Promise<LauncherState>;
+    createCustomProfile: (input: CustomGameProfileInput) => Promise<LauncherState>;
+    updateCustomProfile: (profileId: string, input: CustomGameProfileInput) => Promise<LauncherState>;
+    deleteCustomProfile: (
+      profileId: string,
+      deleteFiles: boolean,
+    ) => Promise<{ state: LauncherState; cleanupError: string | null }>;
+    setTitleBarTheme: (
+      theme: AppTheme,
+      performanceMode: LauncherState['performanceMode'],
+      performanceThemeEnabled: boolean,
+    ) => Promise<void>;
     saveLanguage: (language: LauncherState['language']) => Promise<LauncherState>;
     saveTheme: (theme: AppTheme) => Promise<LauncherState>;
     installGameProfile: () => Promise<string>;
@@ -192,12 +284,29 @@ interface Window {
     uploadWestronCape: () => Promise<{ cancelled: boolean; profile?: WestronProfile }>;
     deleteWestronCape: () => Promise<WestronProfile | null>;
     logoutWestronAccount: () => Promise<string>;
+    listWestronFriends: () => Promise<WestronFriendList>;
+    sendWestronFriendRequest: (input: { username: string }) => Promise<{ message: string }>;
+    respondWestronFriendRequest: (input: { requestId: string; accept: boolean }) => Promise<{ message: string }>;
+    removeWestronFriend: (input: { userId: string }) => Promise<{ message: string }>;
+    updateWestronPresence: (input: { inGame: boolean }) => Promise<{ updated: true }>;
+    sendWestronEphemeralMessage: (input: { recipientUserId: string; body: string }) => Promise<{ messageId: string }>;
+    listWestronEphemeralMessages: () => Promise<WestronEphemeralMessage[]>;
+    consumeWestronEphemeralMessage: (input: { messageId: string }) => Promise<WestronConsumedEphemeralMessage>;
+    getWestronVoiceCallIceServers: () => Promise<{ iceServers: WestronIceServer[] }>;
+    sendWestronVoiceCallSignal: (input: {
+      recipientUserId: string;
+      callId: string;
+      type: WestronCallSignalType;
+      sdp: string;
+    }) => Promise<{ sent: true }>;
+    consumeWestronVoiceCallSignals: () => Promise<WestronCallSignal[]>;
     onGameExit: (callback: (result: GameExit) => void) => () => void;
     onInstallProgress: (callback: (progress: InstallProgress) => void) => () => void;
     installMenu: () => Promise<string>;
     searchMods: (query: string, offset?: number) => Promise<ModrinthSearchPage>;
     searchContent: (type: 'resourcepack' | 'shader', query: string, offset?: number) => Promise<ModrinthSearchPage>;
     getProjectVersions: (type: 'mod' | 'resourcepack' | 'shader', projectId: string) => Promise<ModrinthVersionOption[]>;
+    getProjectMetadata: (projectIds: string[]) => Promise<Record<string, ModrinthProjectMetadata>>;
     getProjectIcons: (projectIds: string[]) => Promise<Record<string, string>>;
     getModArchiveMetadata: (fileNames: string[]) => Promise<Record<string, ModArchiveMetadata>>;
     installMod: (projectId: string, confirmedDependencyIds?: string[], forceReinstall?: boolean) => Promise<ModInstallResult>;
@@ -227,6 +336,7 @@ interface Window {
     openModsFolder: () => Promise<void>;
     openContentFolder: (type: 'resourcepack' | 'shader') => Promise<void>;
     openProfilesFolder: () => Promise<void>;
+    openSelectedProfileFolder: () => Promise<void>;
     saveGameBehavior: (behavior: GameBehavior) => Promise<LauncherState>;
     publishUpdate: () => Promise<{ cancelled: boolean; version?: string }>;
     listScreenshots: () => Promise<GameScreenshotPage>;

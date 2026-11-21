@@ -6,4 +6,4 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'westron-client-skin'
+rootProject.name = 'westron-launcher'

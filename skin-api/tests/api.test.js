@@ -43,7 +43,7 @@ beforeEach(async () => {
 
 test('allows enough time for large release uploads to arrive through a slow connection', () => {
   assert.equal(app.server.requestTimeout, 90 * 60 * 1000);
-  assert.equal(app.skinDatabase.pragma('user_version', { simple: true }), 4);
+  assert.equal(app.skinDatabase.pragma('user_version', { simple: true }), 5);
 });
 
 test('repairs version 4 databases missing Minecraft username columns', async () => {
@@ -66,7 +66,9 @@ test('repairs version 4 databases missing Minecraft username columns', async () 
     assert.equal(userColumns.has('minecraft_username'), true);
     assert.equal(userColumns.has('minecraft_username_normalized'), true);
     assert.equal(database.prepare('SELECT username FROM users WHERE id = ?').get('existing-user').username, 'ExistingUser');
-    assert.equal(database.pragma('user_version', { simple: true }), 4);
+    assert.equal(database.pragma('user_version', { simple: true }), 5);
+    await migrateDatabase(database);
+    assert.equal(database.pragma('user_version', { simple: true }), 5);
   } finally {
     database.close();
   }
@@ -185,6 +187,17 @@ test('health, OpenAPI document and implemented routes are available', async () =
     ['POST /api/v1/auth/reset-password', '/api/v1/auth/reset-password'],
     ['POST /api/v1/auth/logout', '/api/v1/auth/logout'],
     ['GET /api/v1/me', '/api/v1/me'],
+    ['GET /api/v1/friends', '/api/v1/friends'],
+    ['POST /api/v1/friends/requests', '/api/v1/friends/requests'],
+    ['POST /api/v1/friends/requests/{requestId}/respond', '/api/v1/friends/requests/:requestId/respond'],
+    ['DELETE /api/v1/friends/{friendUserId}', '/api/v1/friends/:friendUserId'],
+    ['POST /api/v1/presence', '/api/v1/presence'],
+    ['POST /api/v1/friends/messages', '/api/v1/friends/messages'],
+    ['GET /api/v1/friends/messages/inbox', '/api/v1/friends/messages/inbox'],
+    ['POST /api/v1/friends/messages/{messageId}/consume', '/api/v1/friends/messages/:messageId/consume'],
+    ['GET /api/v1/friends/calls/ice-servers', '/api/v1/friends/calls/ice-servers'],
+    ['POST /api/v1/friends/calls/signals', '/api/v1/friends/calls/signals'],
+    ['GET /api/v1/friends/calls/signals', '/api/v1/friends/calls/signals'],
     ['PUT /api/v1/me/minecraft-profile', '/api/v1/me/minecraft-profile'],
     ['POST /api/v1/me/skin', '/api/v1/me/skin'],
     ['PUT /api/v1/me/skin', '/api/v1/me/skin'],
@@ -208,6 +221,175 @@ test('health, OpenAPI document and implemented routes are available', async () =
     url: '/api/v1/curseforge/mods/search',
   });
   assert.equal(removedRoute.statusCode, 404);
+});
+
+test('supports friend requests, friend-only presence, one-time messages and call signalling', async () => {
+  const alice = await createAccount('Alice');
+  const bob = await createAccount('Bob');
+  const outsider = await createAccount('Outsider');
+  const aliceHeaders = bearer(alice.accessToken);
+  const bobHeaders = bearer(bob.accessToken);
+
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/friends' })).statusCode, 401);
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/requests',
+    headers: aliceHeaders,
+    payload: { username: 'Alice' },
+  })).statusCode, 400);
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/requests',
+    headers: aliceHeaders,
+    payload: { username: 'NoSuchUser' },
+  })).statusCode, 404);
+
+  const request = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/requests',
+    headers: aliceHeaders,
+    payload: { username: 'bOB' },
+  });
+  assert.equal(request.statusCode, 201, request.body);
+  const requestId = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends',
+    headers: bobHeaders,
+  })).json().incomingRequests[0].requestId;
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: `/api/v1/friends/requests/${requestId}/respond`,
+    headers: bearer(outsider.accessToken),
+    payload: { accept: true },
+  })).statusCode, 404);
+  const accepted = await app.inject({
+    method: 'POST',
+    url: `/api/v1/friends/requests/${requestId}/respond`,
+    headers: bobHeaders,
+    payload: { accept: true },
+  });
+  assert.equal(accepted.statusCode, 200, accepted.body);
+
+  const presence = await app.inject({
+    method: 'POST',
+    url: '/api/v1/presence',
+    headers: bobHeaders,
+    payload: { inGame: true },
+  });
+  assert.equal(presence.statusCode, 200, presence.body);
+  assert.deepEqual(presence.json(), { updated: true });
+  const friendList = await app.inject({ method: 'GET', url: '/api/v1/friends', headers: aliceHeaders });
+  const bobFriend = friendList.json().friends[0];
+  assert.equal(bobFriend.username, 'Bob');
+  assert.equal(bobFriend.online, true);
+  assert.equal(bobFriend.inGame, true);
+
+  const message = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/messages',
+    headers: aliceHeaders,
+    payload: { recipientUserId: bobFriend.userId, body: 'Hello, one-time message.' },
+  });
+  assert.equal(message.statusCode, 201, message.body);
+  const forbiddenMessage = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/messages',
+    headers: bearer(outsider.accessToken),
+    payload: { recipientUserId: friendList.json().friends[0].userId, body: 'Not allowed' },
+  });
+  assert.equal(forbiddenMessage.statusCode, 404);
+
+  const inbox = await app.inject({ method: 'GET', url: '/api/v1/friends/messages/inbox', headers: bobHeaders });
+  assert.equal(inbox.statusCode, 200, inbox.body);
+  assert.equal(inbox.json().length, 1);
+  assert.equal(Object.prototype.hasOwnProperty.call(inbox.json()[0], 'body'), false);
+  const consumed = await app.inject({
+    method: 'POST',
+    url: `/api/v1/friends/messages/${message.json().messageId}/consume`,
+    headers: bobHeaders,
+  });
+  assert.equal(consumed.statusCode, 200, consumed.body);
+  assert.equal(consumed.json().body, 'Hello, one-time message.');
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: `/api/v1/friends/messages/${message.json().messageId}/consume`,
+    headers: bobHeaders,
+  })).statusCode, 404);
+
+  const iceServers = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/calls/ice-servers',
+    headers: aliceHeaders,
+  });
+  assert.equal(iceServers.statusCode, 200, iceServers.body);
+  assert.ok(iceServers.json().iceServers.some((server) => server.urls.some((url) => url.startsWith('stun:'))));
+
+  const callId = '123e4567-e89b-12d3-a456-426614174000';
+  const offer = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/calls/signals',
+    headers: aliceHeaders,
+    payload: { recipientUserId: bobFriend.userId, callId, type: 'offer', sdp: 'v=0\r\n' },
+  });
+  assert.equal(offer.statusCode, 202, offer.body);
+  const bobSignals = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/calls/signals',
+    headers: bobHeaders,
+  });
+  assert.equal(bobSignals.statusCode, 200, bobSignals.body);
+  assert.equal(bobSignals.json()[0].type, 'offer');
+  assert.equal(bobSignals.json()[0].sdp, 'v=0\r\n');
+  assert.deepEqual((await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/calls/signals',
+    headers: aliceHeaders,
+  })).json(), []);
+
+  const pendingMessage = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/messages',
+    headers: aliceHeaders,
+    payload: { recipientUserId: bobFriend.userId, body: 'Removed with friendship' },
+  });
+  assert.equal(pendingMessage.statusCode, 201, pendingMessage.body);
+  const pendingCallId = '223e4567-e89b-12d3-a456-426614174000';
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/calls/signals',
+    headers: aliceHeaders,
+    payload: { recipientUserId: bobFriend.userId, callId: pendingCallId, type: 'offer', sdp: 'v=0\r\n' },
+  })).statusCode, 202);
+
+  app.skinDatabase.prepare('UPDATE presence SET last_seen_at = ?, in_game = 1 WHERE user_id = ?')
+    .run(Date.now() - 60_000, bobFriend.userId);
+  const stalePresence = await app.inject({ method: 'GET', url: '/api/v1/friends', headers: aliceHeaders });
+  assert.equal(stalePresence.json().friends[0].online, false);
+  assert.equal(stalePresence.json().friends[0].inGame, false);
+
+  const removed = await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/friends/${bobFriend.userId}`,
+    headers: aliceHeaders,
+  });
+  assert.equal(removed.statusCode, 200, removed.body);
+  assert.deepEqual((await app.inject({ method: 'GET', url: '/api/v1/friends', headers: aliceHeaders })).json().friends, []);
+  assert.deepEqual((await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/messages/inbox',
+    headers: bobHeaders,
+  })).json(), []);
+  assert.deepEqual((await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/calls/signals',
+    headers: bobHeaders,
+  })).json(), []);
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/messages',
+    headers: aliceHeaders,
+    payload: { recipientUserId: bobFriend.userId, body: 'After removal' },
+  })).statusCode, 404);
 });
 
 test('links Minecraft names to Westron profiles for public skin and cape lookup', async () => {

@@ -16,6 +16,8 @@ tags:
   - name: skins
   - name: capes
   - name: updates
+  - name: friends
+  - name: presence
 paths:
   /api/health:
     get:
@@ -251,6 +253,254 @@ paths:
         "200": { $ref: "#/components/responses/Profile" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends:
+    get:
+      operationId: listFriends
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Accepted friends, incoming requests and outgoing requests.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FriendList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/requests:
+    post:
+      operationId: sendFriendRequest
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username]
+              properties:
+                username: { type: string, minLength: 3, maxLength: 16, pattern: "^[A-Za-z0-9_]+$" }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "201": { $ref: "#/components/responses/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/requests/{requestId}/respond:
+    post:
+      operationId: respondToFriendRequest
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, minLength: 36, maxLength: 36 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [accept]
+              properties:
+                accept: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/{friendUserId}:
+    delete:
+      operationId: removeFriend
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: friendUserId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "200": { $ref: "#/components/responses/Message" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/presence:
+    post:
+      operationId: updatePresence
+      tags: [presence]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [inGame]
+              properties:
+                inGame: { type: boolean }
+      responses:
+        "200":
+          description: Presence timestamp updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated]
+                properties:
+                  updated: { const: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages:
+    post:
+      operationId: sendEphemeralMessage
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [recipientUserId, body]
+              properties:
+                recipientUserId: { type: string, minLength: 1, maxLength: 64 }
+                body: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "201":
+          description: Message queued for its first and only read.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messageId]
+                properties:
+                  messageId: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages/inbox:
+    get:
+      operationId: listEphemeralMessages
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Pending message metadata only; bodies are returned by the consume endpoint.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/EphemeralMessage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages/{messageId}/consume:
+    post:
+      operationId: consumeEphemeralMessage
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, minLength: 36, maxLength: 36 }
+      responses:
+        "200":
+          description: Read and delete a pending message in one transaction.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConsumedEphemeralMessage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/calls/ice-servers:
+    get:
+      operationId: getVoiceCallIceServers
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: STUN/TURN configuration for WebRTC voice calls.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/VoiceIceServers" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/calls/signals:
+    get:
+      operationId: consumeVoiceCallSignals
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Fetch and consume pending friend-to-friend WebRTC signals.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/VoiceCallSignal" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: sendVoiceCallSignal
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [recipientUserId, callId, type, sdp]
+              properties:
+                recipientUserId: { type: string, minLength: 1, maxLength: 64 }
+                callId: { type: string, format: uuid }
+                type: { type: string, enum: [offer, answer, hangup, reject] }
+                sdp: { type: string, maxLength: 60000 }
+      responses:
+        "202":
+          description: Signal queued for the friend.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sent]
+                properties:
+                  sent: { const: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
   /api/v1/me/minecraft-profile:
@@ -640,6 +890,85 @@ components:
               properties:
                 url: { type: string, format: uri }
                 updatedAt: { type: string, format: date-time }
+    FriendList:
+      type: object
+      additionalProperties: false
+      required: [friends, incomingRequests, outgoingRequests]
+      properties:
+        friends:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [userId, username, online, inGame]
+            properties:
+              userId: { type: string }
+              username: { type: string }
+              online: { type: boolean }
+              inGame: { type: boolean }
+        incomingRequests:
+          type: array
+          items: { $ref: "#/components/schemas/FriendRequest" }
+        outgoingRequests:
+          type: array
+          items: { $ref: "#/components/schemas/FriendRequest" }
+    FriendRequest:
+      type: object
+      additionalProperties: false
+      required: [requestId, userId, username, createdAt]
+      properties:
+        requestId: { type: string, format: uuid }
+        userId: { type: string }
+        username: { type: string }
+        createdAt: { type: string, format: date-time }
+    EphemeralMessage:
+      type: object
+      additionalProperties: false
+      required: [messageId, senderUserId, senderUsername, createdAt]
+      properties:
+        messageId: { type: string, format: uuid }
+        senderUserId: { type: string }
+        senderUsername: { type: string }
+        createdAt: { type: string, format: date-time }
+    ConsumedEphemeralMessage:
+      type: object
+      additionalProperties: false
+      required: [senderUserId, senderUsername, body, createdAt]
+      properties:
+        senderUserId: { type: string }
+        senderUsername: { type: string }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+    VoiceIceServers:
+      type: object
+      additionalProperties: false
+      required: [iceServers]
+      properties:
+        iceServers:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [urls]
+            properties:
+              urls:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items: { type: string }
+              username: { type: string }
+              credential: { type: string }
+    VoiceCallSignal:
+      type: object
+      additionalProperties: false
+      required: [signalId, fromUserId, fromUsername, callId, type, sdp]
+      properties:
+        signalId: { type: string, format: uuid }
+        fromUserId: { type: string }
+        fromUsername: { type: string }
+        callId: { type: string, format: uuid }
+        type: { type: string, enum: [offer, answer, hangup, reject] }
+        sdp: { type: string }
     Error:
       type: object
       additionalProperties: false

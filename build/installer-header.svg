@@ -11,14 +11,15 @@
     </linearGradient>
   </defs>
   <rect width="150" height="57" fill="url(#bg)"/>
-  <g transform="translate(12 11)" stroke="#e6deff" stroke-opacity=".65" stroke-width=".7" stroke-linejoin="round">
-    <path d="M17 0 34 9.5 17 19 0 9.5Z" fill="url(#cube)"/>
-    <path d="M0 9.5 17 19v19L0 28.5Z" fill="#66558f"/>
-    <path d="M34 9.5 17 19v19l17-9.5Z" fill="#3d3457"/>
+  <g transform="translate(8 5)" stroke="#eee8ff" stroke-opacity=".86" stroke-width="1.15" stroke-linejoin="round">
+    <path d="M19 0 38 11 19 22 0 11Z" fill="url(#cube)"/>
+    <path d="M0 11 19 22v23L0 34Z" fill="#806ac2"/>
+    <path d="M38 11 19 22v23l19-11Z" fill="#55468c"/>
+    <path d="M19 0v22M0 11l19 11 19-11M19 22v23" fill="none" stroke-opacity=".5"/>
   </g>
   <g font-family="Segoe UI,Arial,sans-serif">
-    <text x="58" y="27" fill="#f2efff" font-size="12" font-weight="700" letter-spacing=".7">WESTRON</text>
-    <text x="59" y="40" fill="#a99bd8" font-size="7" letter-spacing="1.9">CLIENT SETUP</text>
+    <text x="56" y="27" fill="#f2efff" font-size="12" font-weight="700" letter-spacing=".7">WESTRON</text>
+    <text x="57" y="40" fill="#c2b5ed" font-size="6.5" letter-spacing="1.2">LAUNCHER SETUP</text>
   </g>
   <path d="M0 56h150" stroke="#b9a7ff" stroke-opacity=".4"/>
 </svg>

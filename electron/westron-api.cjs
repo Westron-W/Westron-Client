@@ -11,6 +11,16 @@ const WESTRON_API_PATHS = Object.freeze({
   minecraftProfile: '/api/v1/me/minecraft-profile',
   skin: '/api/v1/me/skin',
   cape: '/api/v1/me/cape',
+  friends: '/api/v1/friends',
+  friendRequests: '/api/v1/friends/requests',
+  respondFriendRequest: (requestId) => `/api/v1/friends/requests/${encodeURIComponent(requestId)}/respond`,
+  removeFriend: (userId) => `/api/v1/friends/${encodeURIComponent(userId)}`,
+  presence: '/api/v1/presence',
+  friendMessages: '/api/v1/friends/messages',
+  friendMessageInbox: '/api/v1/friends/messages/inbox',
+  consumeFriendMessage: (messageId) => `/api/v1/friends/messages/${encodeURIComponent(messageId)}/consume`,
+  callIceServers: '/api/v1/friends/calls/ice-servers',
+  callSignals: '/api/v1/friends/calls/signals',
   updateAsset: (fileName) => `/api/v1/admin/updates/${encodeURIComponent(fileName)}`,
 });
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
@@ -29,6 +39,17 @@ const WESTRON_IPC_CHANNELS = Object.freeze({
   uploadCape: 'app:westron-upload-cape',
   deleteCape: 'app:westron-delete-cape',
   logout: 'app:westron-logout',
+  listFriends: 'app:westron-list-friends',
+  sendFriendRequest: 'app:westron-send-friend-request',
+  respondFriendRequest: 'app:westron-respond-friend-request',
+  removeFriend: 'app:westron-remove-friend',
+  updatePresence: 'app:westron-update-presence',
+  sendEphemeralMessage: 'app:westron-send-ephemeral-message',
+  listEphemeralMessages: 'app:westron-list-ephemeral-messages',
+  consumeEphemeralMessage: 'app:westron-consume-ephemeral-message',
+  getVoiceCallIceServers: 'app:westron-get-voice-call-ice-servers',
+  sendVoiceCallSignal: 'app:westron-send-voice-call-signal',
+  consumeVoiceCallSignals: 'app:westron-consume-voice-call-signals',
 });
 
 function registerWestronIpcHandlers(ipcMain, handlers) {
@@ -148,11 +169,12 @@ function createWestronApiClient({
     return result;
   }
 
-  async function postJson(endpoint, body) {
+  async function postJson(endpoint, body, accessToken) {
     return request(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      accessToken,
     });
   }
 
@@ -174,6 +196,26 @@ function createWestronApiClient({
       body: JSON.stringify({ username }),
       accessToken,
     }),
+    listFriends: (accessToken) => request(WESTRON_API_PATHS.friends, { accessToken }),
+    sendFriendRequest: (username, accessToken) => postJson(WESTRON_API_PATHS.friendRequests, { username }, accessToken),
+    respondFriendRequest: (requestId, accept, accessToken) =>
+      postJson(WESTRON_API_PATHS.respondFriendRequest(requestId), { accept }, accessToken),
+    removeFriend: (userId, accessToken) => request(WESTRON_API_PATHS.removeFriend(userId), {
+      method: 'DELETE',
+      accessToken,
+    }),
+    updatePresence: (inGame, accessToken) => postJson(WESTRON_API_PATHS.presence, { inGame }, accessToken),
+    sendEphemeralMessage: (recipientUserId, body, accessToken) =>
+      postJson(WESTRON_API_PATHS.friendMessages, { recipientUserId, body }, accessToken),
+    listEphemeralMessages: (accessToken) => request(WESTRON_API_PATHS.friendMessageInbox, { accessToken }),
+    consumeEphemeralMessage: (messageId, accessToken) => postJson(
+      WESTRON_API_PATHS.consumeFriendMessage(messageId),
+      {},
+      accessToken,
+    ),
+    getVoiceCallIceServers: (accessToken) => request(WESTRON_API_PATHS.callIceServers, { accessToken }),
+    sendVoiceCallSignal: (signal, accessToken) => postJson(WESTRON_API_PATHS.callSignals, signal, accessToken),
+    consumeVoiceCallSignals: (accessToken) => request(WESTRON_API_PATHS.callSignals, { accessToken }),
   };
 }
 

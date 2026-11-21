@@ -18,7 +18,7 @@ test('package and lockfile versions are aligned for release metadata', () => {
   assert.match(mainCode, /resolveDefaultMinecraftDir\(appDataDirectory, process\.platform\)/);
   assert.match(mainCode, /path\.join\(targetMinecraftDir, 'westron-profiles'\)/);
   assert.match(mainCode, /migrateLegacyMinecraftProfiles\(legacyDirectory, targetMinecraftDir\)/);
-  assert.match(mainCode, /minecraftDir: process\.platform === 'win32'/);
+  assert.match(mainCode, /const minecraftDir = process\.platform === 'win32'/);
 });
 
 test('Windows updater uses a hidden generic feed and releases show only installers', () => {
@@ -117,17 +117,17 @@ test('macOS packages have isolated output and include the shared Fabric client m
   assert.deepEqual(packageJson.build.extraResources[1], macBuild.extraResources[0]);
   assert.ok(packageJson.build.files.includes('dist/**/*'));
   assert.ok(packageJson.build.files.includes('electron/**/*'));
-  assert.equal(macBuild.extraResources[0].to, `westron-client-skin-${packageJson.version}.jar`);
+  assert.equal(macBuild.extraResources[0].to, `westron-launcher-${packageJson.version}.jar`);
   assert.equal(packageJson.scripts['package:macos'].includes('macos-client/electron-builder.json'), true);
   assert.equal(packageJson.version, '1.0.3');
   const gradleProperties = fs.readFileSync('fabric-mod/gradle.properties', 'utf8');
   assert.match(gradleProperties, new RegExp(`^mod_version=${packageJson.version.replaceAll('.', '\\.')}$`, 'm'));
-  assert.equal(packageJson.build.extraResources[1].to, `westron-client-skin-${packageJson.version}.jar`);
+  assert.equal(packageJson.build.extraResources[1].to, `westron-launcher-${packageJson.version}.jar`);
 });
 
 test('macOS build maintains parity with Windows features and resources', () => {
   assert.equal(macBuild.mac.darkModeSupport, true);
-  assert.equal(fs.existsSync(`fabric-mod/build/libs/westron-client-skin-${packageJson.version}.jar`), true);
+  assert.equal(fs.existsSync(`fabric-mod/build/libs/westron-launcher-${packageJson.version}.jar`), true);
   assert.ok(packageJson.scripts['package:macos'].includes('npm run build:mod:macos'));
   assert.ok(packageJson.scripts['package:macos'].includes('npm run build'));
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');

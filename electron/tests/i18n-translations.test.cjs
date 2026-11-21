@@ -58,7 +58,7 @@ test('every added UI and dynamic message has a translation in each supported lan
   const source = await fs.readFile(sourcePath, 'utf8');
   const sourceFile = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
-  for (const objectName of ['addedUiTranslations', 'dynamicUiTemplates']) {
+  for (const objectName of ['addedUiTranslations', 'dynamicUiTemplates', 'customProfileUiTranslations', 'friendsUiTranslations']) {
     const records = readRecord(sourceFile, objectName);
     const expectedKeys = new Set(languages.flatMap((language) => [...(records.get(language)?.keys() ?? [])]));
     for (const language of languages) {
@@ -85,14 +85,19 @@ test('every statically used UI label is translated in each supported language', 
   const appPath = path.join(__dirname, '..', '..', 'src', 'App.tsx');
   const appSource = await fs.readFile(appPath, 'utf8');
   const appFile = ts.createSourceFile(appPath, appSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const friendsPath = path.join(__dirname, '..', '..', 'src', 'FriendsPage.tsx');
+  const friendsSource = await fs.readFile(friendsPath, 'utf8');
+  const friendsFile = ts.createSourceFile(friendsPath, friendsSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const i18nPath = path.join(__dirname, '..', '..', 'src', 'i18n.ts');
   const i18nSource = await fs.readFile(i18nPath, 'utf8');
   const i18nFile = ts.createSourceFile(i18nPath, i18nSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const usedKeys = findUiKeys(appFile);
+  const usedKeys = new Set([...findUiKeys(appFile), ...findUiKeys(friendsFile)]);
   const primaryRecords = readRecord(i18nFile, 'translations');
   const baseRecords = readRecord(i18nFile, 'uiTranslations');
   const addedRecords = readRecord(i18nFile, 'addedUiTranslations');
   const completeRecords = readRecord(i18nFile, 'completeUiTranslations');
+  const customProfileRecords = readRecord(i18nFile, 'customProfileUiTranslations');
+  const friendsRecords = readRecord(i18nFile, 'friendsUiTranslations');
   const missing = [];
 
   for (const language of languages) {
@@ -101,6 +106,8 @@ test('every statically used UI label is translated in each supported language', 
       ...(baseRecords.get(language)?.keys() ?? []),
       ...(addedRecords.get(language)?.keys() ?? []),
       ...(completeRecords.get(language)?.keys() ?? []),
+      ...(customProfileRecords.get(language)?.keys() ?? []),
+      ...(friendsRecords.get(language)?.keys() ?? []),
     ]);
     for (const key of usedKeys) {
       if (!translatedKeys.has(key)) missing.push(`${language}: ${key}`);

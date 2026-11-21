@@ -68,6 +68,28 @@ function parseTrustProxy(value) {
   return value;
 }
 
+function configureIceServers(env) {
+  const stunUrls = (env.STUN_SERVER_URLS || 'stun:stun.l.google.com:19302')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
+  const turnUrls = (env.TURN_SERVER_URLS || '').split(',').map((url) => url.trim()).filter(Boolean);
+  const turnUsername = env.TURN_SERVER_USERNAME || '';
+  const turnCredential = env.TURN_SERVER_CREDENTIAL || '';
+
+  if ((turnUrls.length || turnUsername || turnCredential)
+    && (!turnUrls.length || !turnUsername || !turnCredential)) {
+    throw new Error('TURN_SERVER_URLS, TURN_SERVER_USERNAME and TURN_SERVER_CREDENTIAL must be configured together');
+  }
+  if ([...stunUrls, ...turnUrls].some((url) => !/^(?:stun|stuns|turn|turns):/i.test(url))) {
+    throw new Error('STUN/TURN server URLs must use stun:, stuns:, turn: or turns: schemes');
+  }
+
+  const iceServers = stunUrls.length ? [{ urls: stunUrls }] : [];
+  if (turnUrls.length) iceServers.push({ urls: turnUrls, username: turnUsername, credential: turnCredential });
+  return iceServers;
+}
+
 function profileResponse(user, skin, publicBaseUrl, cape) {
   return {
     username: user.username,
@@ -135,6 +157,7 @@ export async function buildApp({
   if (refreshTokenTtlDays > 365) throw new Error('REFRESH_TOKEN_TTL_DAYS must not exceed 365');
   const rateLimitMax = parsePositiveInteger(env.RATE_LIMIT_MAX, 120, 'RATE_LIMIT_MAX');
   const authRateLimitMax = parsePositiveInteger(env.AUTH_RATE_LIMIT_MAX, 8, 'AUTH_RATE_LIMIT_MAX');
+  const iceServers = configureIceServers(env);
   const dummyPasswordHash = await argon2.hash(createId(), {
     type: argon2.argon2id,
     memoryCost: 19456,
@@ -275,6 +298,20 @@ export async function buildApp({
   async function authenticateLegacyAccount(request) {
     return authenticateWithPolicy(request, false);
   }
+  const friendshipExists = (firstUserId, secondUserId) => {
+    const [userLowId, userHighId] = [firstUserId, secondUserId].sort();
+    return Boolean(database.prepare(`
+      SELECT 1 FROM friendships WHERE user_low_id = ? AND user_high_id = ?
+    `).get(userLowId, userHighId));
+  };
+  const insertFriendship = database.prepare(`
+    INSERT OR IGNORE INTO friendships (user_low_id, user_high_id, created_at)
+    VALUES (?, ?, ?)
+  `);
+  const createFriendship = (firstUserId, secondUserId, createdAt = new Date().toISOString()) => {
+    const [userLowId, userHighId] = [firstUserId, secondUserId].sort();
+    insertFriendship.run(userLowId, userHighId, createdAt);
+  };
 
   const accessTokenResponse = {
     type: 'object',
@@ -880,6 +917,559 @@ export async function buildApp({
     const cape = database.prepare('SELECT updated_at FROM capes WHERE user_id = ?')
       .get(request.skinUser.id);
     return profileResponse(request.skinUser, skin, publicBaseUrl, cape);
+  });
+
+  app.get('/api/v1/friends', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'listFriends',
+      tags: ['friends'],
+      response: {
+        200: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['friends', 'incomingRequests', 'outgoingRequests'],
+          properties: {
+            friends: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['userId', 'username', 'online', 'inGame'],
+                properties: {
+                  userId: { type: 'string' },
+                  username: { type: 'string' },
+                  online: { type: 'boolean' },
+                  inGame: { type: 'boolean' },
+                },
+              },
+            },
+            incomingRequests: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['requestId', 'userId', 'username', 'createdAt'],
+                properties: {
+                  requestId: { type: 'string' },
+                  userId: { type: 'string' },
+                  username: { type: 'string' },
+                  createdAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            },
+            outgoingRequests: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['requestId', 'userId', 'username', 'createdAt'],
+                properties: {
+                  requestId: { type: 'string' },
+                  userId: { type: 'string' },
+                  username: { type: 'string' },
+                  createdAt: { type: 'string', format: 'date-time' },
+                },
+              },
+            },
+          },
+        },
+        401: errorResponse,
+        403: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request) => {
+    const onlineThreshold = Date.now() - 45_000;
+    const friends = database.prepare(`
+      SELECT users.id AS userId, users.username,
+        CASE WHEN presence.last_seen_at > ? THEN 1 ELSE 0 END AS online,
+        CASE WHEN presence.last_seen_at > ? AND presence.in_game = 1 THEN 1 ELSE 0 END AS in_game
+      FROM friendships
+      JOIN users ON users.id = CASE
+        WHEN friendships.user_low_id = ? THEN friendships.user_high_id
+        ELSE friendships.user_low_id
+      END
+      LEFT JOIN presence ON presence.user_id = users.id
+      WHERE friendships.user_low_id = ? OR friendships.user_high_id = ?
+      ORDER BY users.username COLLATE NOCASE
+    `).all(onlineThreshold, onlineThreshold, request.skinUser.id, request.skinUser.id, request.skinUser.id);
+    const incomingRequests = database.prepare(`
+      SELECT friend_requests.id AS requestId, users.id AS userId, users.username, friend_requests.created_at AS createdAt
+      FROM friend_requests
+      JOIN users ON users.id = friend_requests.requester_user_id
+      WHERE friend_requests.recipient_user_id = ? AND friend_requests.status = 'pending'
+      ORDER BY friend_requests.created_at
+    `).all(request.skinUser.id);
+    const outgoingRequests = database.prepare(`
+      SELECT friend_requests.id AS requestId, users.id AS userId, users.username, friend_requests.created_at AS createdAt
+      FROM friend_requests
+      JOIN users ON users.id = friend_requests.recipient_user_id
+      WHERE friend_requests.requester_user_id = ? AND friend_requests.status = 'pending'
+      ORDER BY friend_requests.created_at
+    `).all(request.skinUser.id);
+    return {
+      friends: friends.map((friend) => ({
+        userId: friend.userId,
+        username: friend.username,
+        online: Boolean(friend.online),
+        inGame: Boolean(friend.in_game),
+      })),
+      incomingRequests,
+      outgoingRequests,
+    };
+  });
+
+  app.post('/api/v1/friends/requests', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'sendFriendRequest',
+      tags: ['friends'],
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['username'],
+        properties: { username: { type: 'string', minLength: 3, maxLength: 16 } },
+      },
+      response: {
+        201: { type: 'object', additionalProperties: false, required: ['message'], properties: { message: { type: 'string' } } },
+        200: { type: 'object', additionalProperties: false, required: ['message'], properties: { message: { type: 'string' } } },
+        400: errorResponse,
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        409: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request, reply) => {
+    const username = request.body.username.trim();
+    if (!validateUsername(username)) {
+      throw new ApiError(400, 'invalid_username', 'Westron kullanıcı adı geçersiz.');
+    }
+    const target = database.prepare(`
+      SELECT id, username FROM users WHERE username_normalized = ?
+    `).get(normalizeUsername(username));
+    if (!target) throw new ApiError(404, 'user_not_found', 'Bu Westron kullanıcı adı bulunamadı.');
+    if (target.id === request.skinUser.id) {
+      throw new ApiError(400, 'cannot_friend_self', 'Kendinize arkadaşlık isteği gönderemezsiniz.');
+    }
+    if (friendshipExists(request.skinUser.id, target.id)) {
+      throw new ApiError(409, 'already_friends', 'Bu kullanıcı zaten arkadaşınız.');
+    }
+
+    const now = new Date().toISOString();
+    const outgoing = database.prepare(`
+      SELECT id, status FROM friend_requests
+      WHERE requester_user_id = ? AND recipient_user_id = ?
+    `).get(request.skinUser.id, target.id);
+    const reverse = database.prepare(`
+      SELECT id FROM friend_requests
+      WHERE requester_user_id = ? AND recipient_user_id = ? AND status = 'pending'
+    `).get(target.id, request.skinUser.id);
+
+    if (reverse) {
+      database.transaction(() => {
+        createFriendship(request.skinUser.id, target.id, now);
+        database.prepare("UPDATE friend_requests SET status = 'accepted', updated_at = ? WHERE id = ?")
+          .run(now, reverse.id);
+        if (outgoing) {
+          database.prepare("UPDATE friend_requests SET status = 'accepted', updated_at = ? WHERE id = ?")
+            .run(now, outgoing.id);
+        }
+      }).immediate();
+      return reply.send({ message: 'Arkadaşlık isteği karşılıklı olarak kabul edildi.' });
+    }
+    if (outgoing?.status === 'pending') {
+      throw new ApiError(409, 'request_already_sent', 'Bu kullanıcıya zaten arkadaşlık isteği gönderdiniz.');
+    }
+    if (outgoing) {
+      database.prepare(`
+        UPDATE friend_requests SET status = 'pending', created_at = ?, updated_at = ? WHERE id = ?
+      `).run(now, now, outgoing.id);
+    } else {
+      database.prepare(`
+        INSERT INTO friend_requests (id, requester_user_id, recipient_user_id, status, created_at, updated_at)
+        VALUES (?, ?, ?, 'pending', ?, ?)
+      `).run(randomUUID(), request.skinUser.id, target.id, now, now);
+    }
+    return reply.code(201).send({ message: 'Arkadaşlık isteği gönderildi.' });
+  });
+
+  app.post('/api/v1/friends/requests/:requestId/respond', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'respondToFriendRequest',
+      tags: ['friends'],
+      params: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['requestId'],
+        properties: { requestId: { type: 'string', minLength: 36, maxLength: 36 } },
+      },
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['accept'],
+        properties: { accept: { type: 'boolean' } },
+      },
+      response: {
+        200: { type: 'object', additionalProperties: false, required: ['message'], properties: { message: { type: 'string' } } },
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        409: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request) => {
+    const respond = database.transaction(() => {
+      const friendRequest = database.prepare(`
+        SELECT requester_user_id FROM friend_requests
+        WHERE id = ? AND recipient_user_id = ? AND status = 'pending'
+      `).get(request.params.requestId, request.skinUser.id);
+      if (!friendRequest) throw new ApiError(404, 'friend_request_not_found', 'Arkadaşlık isteği bulunamadı veya daha önce yanıtlandı.');
+      const now = new Date().toISOString();
+      const status = request.body.accept ? 'accepted' : 'rejected';
+      database.prepare('UPDATE friend_requests SET status = ?, updated_at = ? WHERE id = ?')
+        .run(status, now, request.params.requestId);
+      if (request.body.accept) createFriendship(request.skinUser.id, friendRequest.requester_user_id, now);
+      return status;
+    });
+    const status = respond.immediate();
+    return { message: status === 'accepted' ? 'Arkadaşlık isteği kabul edildi.' : 'Arkadaşlık isteği reddedildi.' };
+  });
+
+  app.delete('/api/v1/friends/:friendUserId', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'removeFriend',
+      tags: ['friends'],
+      params: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['friendUserId'],
+        properties: { friendUserId: { type: 'string', minLength: 1, maxLength: 64 } },
+      },
+      response: {
+        200: { type: 'object', additionalProperties: false, required: ['message'], properties: { message: { type: 'string' } } },
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request) => {
+    const friendUserId = request.params.friendUserId;
+    const [userLowId, userHighId] = [request.skinUser.id, friendUserId].sort();
+    const remove = database.transaction(() => {
+      const result = database.prepare(`
+        DELETE FROM friendships WHERE user_low_id = ? AND user_high_id = ?
+      `).run(userLowId, userHighId);
+      if (!result.changes) throw new ApiError(404, 'friend_not_found', 'Arkadaş bulunamadı.');
+      database.prepare(`
+        DELETE FROM ephemeral_messages
+        WHERE (sender_user_id = ? AND recipient_user_id = ?)
+          OR (sender_user_id = ? AND recipient_user_id = ?)
+      `).run(request.skinUser.id, friendUserId, friendUserId, request.skinUser.id);
+      database.prepare(`
+        DELETE FROM call_signals
+        WHERE (sender_user_id = ? AND recipient_user_id = ?)
+          OR (sender_user_id = ? AND recipient_user_id = ?)
+      `).run(request.skinUser.id, friendUserId, friendUserId, request.skinUser.id);
+    });
+    remove.immediate();
+    return { message: 'Arkadaş kaldırıldı.' };
+  });
+
+  app.post('/api/v1/presence', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'updatePresence',
+      tags: ['presence'],
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['inGame'],
+        properties: { inGame: { type: 'boolean' } },
+      },
+      response: {
+        200: { type: 'object', additionalProperties: false, required: ['updated'], properties: { updated: { type: 'boolean', const: true } } },
+        401: errorResponse,
+        403: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request) => {
+    database.prepare(`
+      INSERT INTO presence (user_id, in_game, last_seen_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET in_game = excluded.in_game, last_seen_at = excluded.last_seen_at
+    `).run(request.skinUser.id, request.body.inGame ? 1 : 0, Date.now());
+    return { updated: true };
+  });
+
+  app.post('/api/v1/friends/messages', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'sendEphemeralMessage',
+      tags: ['friends'],
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['recipientUserId', 'body'],
+        properties: {
+          recipientUserId: { type: 'string', minLength: 1, maxLength: 64 },
+          body: { type: 'string', minLength: 1, maxLength: 2000 },
+        },
+      },
+      response: {
+        201: { type: 'object', additionalProperties: false, required: ['messageId'], properties: { messageId: { type: 'string' } } },
+        400: errorResponse,
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request, reply) => {
+    const body = request.body.body.trim();
+    if (!body) throw new ApiError(400, 'empty_message', 'Mesaj boş olamaz.');
+    if (!friendshipExists(request.skinUser.id, request.body.recipientUserId)) {
+      throw new ApiError(404, 'friend_not_found', 'Bu kullanıcı arkadaş listenizde bulunmuyor.');
+    }
+    const messageId = randomUUID();
+    database.prepare(`
+      INSERT INTO ephemeral_messages (id, sender_user_id, recipient_user_id, body, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      messageId,
+      request.skinUser.id,
+      request.body.recipientUserId,
+      body,
+      new Date().toISOString(),
+      Date.now() + 7 * 24 * 60 * 60 * 1000,
+    );
+    return reply.code(201).send({ messageId });
+  });
+
+  app.get('/api/v1/friends/messages/inbox', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'listEphemeralMessages',
+      tags: ['friends'],
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['messageId', 'senderUserId', 'senderUsername', 'createdAt'],
+            properties: {
+              messageId: { type: 'string' },
+              senderUserId: { type: 'string' },
+              senderUsername: { type: 'string' },
+              createdAt: { type: 'string', format: 'date-time' },
+            },
+          },
+        },
+        401: errorResponse,
+        403: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request) => {
+    database.prepare('DELETE FROM ephemeral_messages WHERE expires_at <= ?').run(Date.now());
+    return database.prepare(`
+      SELECT ephemeral_messages.id AS messageId, users.id AS senderUserId,
+        users.username AS senderUsername, ephemeral_messages.created_at AS createdAt
+      FROM ephemeral_messages
+      JOIN users ON users.id = ephemeral_messages.sender_user_id
+      WHERE ephemeral_messages.recipient_user_id = ? AND ephemeral_messages.expires_at > ?
+      ORDER BY ephemeral_messages.created_at
+      LIMIT 100
+    `).all(request.skinUser.id, Date.now());
+  });
+
+  app.post('/api/v1/friends/messages/:messageId/consume', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'consumeEphemeralMessage',
+      tags: ['friends'],
+      params: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['messageId'],
+        properties: { messageId: { type: 'string', minLength: 36, maxLength: 36 } },
+      },
+      response: {
+        200: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['senderUserId', 'senderUsername', 'body', 'createdAt'],
+          properties: {
+            senderUserId: { type: 'string' },
+            senderUsername: { type: 'string' },
+            body: { type: 'string' },
+            createdAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request) => {
+    const consume = database.transaction(() => {
+      const message = database.prepare(`
+        SELECT ephemeral_messages.sender_user_id AS senderUserId, users.username AS senderUsername,
+          ephemeral_messages.body, ephemeral_messages.created_at AS createdAt
+        FROM ephemeral_messages
+        JOIN users ON users.id = ephemeral_messages.sender_user_id
+        WHERE ephemeral_messages.id = ?
+          AND ephemeral_messages.recipient_user_id = ?
+          AND ephemeral_messages.expires_at > ?
+      `).get(request.params.messageId, request.skinUser.id, Date.now());
+      if (!message) throw new ApiError(404, 'message_not_found', 'Mesaj bulunamadı veya daha önce açıldı.');
+      database.prepare('DELETE FROM ephemeral_messages WHERE id = ?').run(request.params.messageId);
+      return message;
+    });
+    return consume.immediate();
+  });
+
+  app.get('/api/v1/friends/calls/ice-servers', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'getVoiceCallIceServers',
+      tags: ['friends'],
+      response: {
+        200: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['iceServers'],
+          properties: {
+            iceServers: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['urls'],
+                properties: {
+                  urls: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] },
+                  username: { type: 'string' },
+                  credential: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        401: errorResponse,
+        403: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async () => ({ iceServers }));
+
+  app.post('/api/v1/friends/calls/signals', {
+    ...protectedRouteConfig,
+    bodyLimit: 128 * 1024,
+    schema: {
+      operationId: 'sendVoiceCallSignal',
+      tags: ['friends'],
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['recipientUserId', 'callId', 'type', 'sdp'],
+        properties: {
+          recipientUserId: { type: 'string', minLength: 1, maxLength: 64 },
+          callId: { type: 'string', minLength: 36, maxLength: 36 },
+          type: { type: 'string', enum: ['offer', 'answer', 'hangup', 'reject'] },
+          sdp: { type: 'string', maxLength: 60000 },
+        },
+      },
+      response: {
+        202: { type: 'object', additionalProperties: false, required: ['sent'], properties: { sent: { type: 'boolean', const: true } } },
+        400: errorResponse,
+        401: errorResponse,
+        403: errorResponse,
+        404: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request, reply) => {
+    const { recipientUserId, callId, type, sdp } = request.body;
+    if (!/^[0-9a-f-]{36}$/i.test(callId)) throw new ApiError(400, 'invalid_call_id', 'Arama oturumu geçersiz.');
+    if (type !== 'hangup' && type !== 'reject' && !sdp.trim()) {
+      throw new ApiError(400, 'invalid_call_description', 'Arama bağlantı bilgisi boş olamaz.');
+    }
+    if (!friendshipExists(request.skinUser.id, recipientUserId)) {
+      throw new ApiError(404, 'friend_not_found', 'Bu kullanıcı arkadaş listenizde bulunmuyor.');
+    }
+    const now = Date.now();
+    database.prepare('DELETE FROM call_signals WHERE expires_at <= ?').run(now);
+    database.prepare(`
+      INSERT INTO call_signals (
+        id, sender_user_id, recipient_user_id, call_id, type, sdp, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      randomUUID(),
+      request.skinUser.id,
+      recipientUserId,
+      callId,
+      type,
+      sdp,
+      new Date(now).toISOString(),
+      now + 60_000,
+    );
+    return reply.code(202).send({ sent: true });
+  });
+
+  app.get('/api/v1/friends/calls/signals', {
+    ...protectedRouteConfig,
+    schema: {
+      operationId: 'consumeVoiceCallSignals',
+      tags: ['friends'],
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['signalId', 'fromUserId', 'fromUsername', 'callId', 'type', 'sdp'],
+            properties: {
+              signalId: { type: 'string' },
+              fromUserId: { type: 'string' },
+              fromUsername: { type: 'string' },
+              callId: { type: 'string' },
+              type: { type: 'string', enum: ['offer', 'answer', 'hangup', 'reject'] },
+              sdp: { type: 'string' },
+            },
+          },
+        },
+        401: errorResponse,
+        403: errorResponse,
+        429: errorResponse,
+      },
+    },
+  }, async (request) => {
+    const now = Date.now();
+    database.prepare('DELETE FROM call_signals WHERE expires_at <= ?').run(now);
+    const signals = database.prepare(`
+      SELECT call_signals.id AS signalId, users.id AS fromUserId, users.username AS fromUsername,
+        call_signals.call_id AS callId, call_signals.type, call_signals.sdp
+      FROM call_signals
+      JOIN users ON users.id = call_signals.sender_user_id
+      WHERE call_signals.recipient_user_id = ? AND call_signals.expires_at > ?
+      ORDER BY call_signals.created_at
+      LIMIT 50
+    `).all(request.skinUser.id, now);
+    if (signals.length) {
+      database.prepare(`
+        DELETE FROM call_signals WHERE id IN (${signals.map(() => '?').join(',')})
+      `).run(...signals.map((signal) => signal.signalId));
+    }
+    return signals;
   });
 
   app.put('/api/v1/me/minecraft-profile', {

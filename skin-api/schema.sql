@@ -80,4 +80,62 @@ CREATE TABLE IF NOT EXISTS capes (
   updated_at TEXT NOT NULL
 );
 
-PRAGMA user_version = 4;
+CREATE TABLE IF NOT EXISTS friend_requests (
+  id TEXT PRIMARY KEY,
+  requester_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'rejected')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK (requester_user_id != recipient_user_id),
+  UNIQUE (requester_user_id, recipient_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS friend_requests_recipient_status_idx
+  ON friend_requests(recipient_user_id, status, created_at);
+CREATE INDEX IF NOT EXISTS friend_requests_requester_status_idx
+  ON friend_requests(requester_user_id, status, created_at);
+
+CREATE TABLE IF NOT EXISTS friendships (
+  user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  CHECK (user_low_id < user_high_id),
+  PRIMARY KEY (user_low_id, user_high_id)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS presence (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  in_game INTEGER NOT NULL CHECK (in_game IN (0, 1)),
+  last_seen_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ephemeral_messages (
+  id TEXT PRIMARY KEY,
+  sender_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  CHECK (sender_user_id != recipient_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS ephemeral_messages_recipient_expiry_idx
+  ON ephemeral_messages(recipient_user_id, expires_at, created_at);
+
+CREATE TABLE IF NOT EXISTS call_signals (
+  id TEXT PRIMARY KEY,
+  sender_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  recipient_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  call_id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('offer', 'answer', 'hangup', 'reject')),
+  sdp TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  CHECK (sender_user_id != recipient_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS call_signals_recipient_expiry_idx
+  ON call_signals(recipient_user_id, expires_at, created_at);
+
+PRAGMA user_version = 5;

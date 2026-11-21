@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build",
     "build:mod": "fabric-mod\\gradlew.bat -p fabric-mod build",
     "build:mod:macos": "sh fabric-mod/gradlew -p fabric-mod build",
-    "test:electron": "node --test electron/tests/westron-api.test.cjs electron/tests/modrinth-versions.test.cjs electron/tests/modrinth-installed-files.test.cjs electron/tests/modrinth-fetch.test.cjs electron/tests/modrinth-search.test.cjs electron/tests/update-config.test.cjs electron/tests/microsoft-auth.test.cjs electron/tests/minecraft-downloads.test.cjs electron/tests/update-publisher.test.cjs electron/tests/performance-presets.test.cjs electron/tests/performance-profile.test.cjs electron/tests/game-screenshots.test.cjs electron/tests/minecraft-paths.test.cjs electron/tests/mod-archive-metadata.test.cjs electron/tests/i18n-translations.test.cjs",
+    "test:electron": "node --test electron/tests/westron-api.test.cjs electron/tests/modrinth-versions.test.cjs electron/tests/modrinth-installed-files.test.cjs electron/tests/modrinth-fetch.test.cjs electron/tests/modrinth-search.test.cjs electron/tests/update-config.test.cjs electron/tests/microsoft-auth.test.cjs electron/tests/minecraft-downloads.test.cjs electron/tests/update-publisher.test.cjs electron/tests/performance-presets.test.cjs electron/tests/performance-profile.test.cjs electron/tests/game-screenshots.test.cjs electron/tests/minecraft-paths.test.cjs electron/tests/custom-profiles.test.cjs electron/tests/native-titlebar.test.cjs electron/tests/mod-archive-metadata.test.cjs electron/tests/i18n-translations.test.cjs electron/tests/media-permissions.test.cjs",
     "start": "cross-env NODE_ENV=production electron .",
     "package": "npm run build:mod && npm run build && electron-builder --win nsis --publish never",
     "package:win": "npm run build:mod && npm run build && electron-builder --win nsis --publish never",
@@ -66,8 +66,8 @@
         "to": "westron-launcher.ico"
       },
       {
-        "from": "fabric-mod/build/libs/westron-client-skin-1.0.3.jar",
-        "to": "westron-client-skin-1.0.3.jar"
+        "from": "fabric-mod/build/libs/westron-launcher-1.0.3.jar",
+        "to": "westron-launcher-1.0.3.jar"
       }
     ],
     "win": {

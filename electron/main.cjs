@@ -1,8 +1,10 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu, nativeImage, net, session } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const packageJson = require('../package.json');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const os = require('node:os');
+const { pathToFileURL } = require('node:url');
 app.setName('Westron Launcher');
 app.setPath('cache', path.join(app.getPath('userData'), 'renderer-cache-v2'));
 const { spawn } = require('node:child_process');
@@ -19,11 +21,19 @@ const {
   selectInstallableVersion,
   resolveDependencyVersion,
 } = require('./modrinth-versions.cjs');
-const { persistInstalledFiles, readInstallIndex, removeInstalledFile } = require('./modrinth-installed-files.cjs');
+const {
+  addProjectIdsToFiles,
+  persistInstalledFiles,
+  readInstallIndex,
+  removeInstalledFile,
+} = require('./modrinth-installed-files.cjs');
+const { getModArchiveMetadata } = require('./mod-archive-metadata.cjs');
 const { createMicrosoftAuthService } = require('./microsoft-auth.cjs');
 const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-downloads.cjs');
 const { readUpdateFiles } = require('./update-publisher.cjs');
 const { configureUpdateFeed } = require('./update-config.cjs');
+const { getTitleBarOverlayOptions } = require('./native-titlebar.cjs');
+const { canGrantAudioMediaPermission } = require('./media-permissions.cjs');
 const {
   getPerformancePresetProjects,
   QUALITY_SHADER,
@@ -41,6 +51,13 @@ const {
   migrateLegacyMinecraftProfiles,
 } = require('./minecraft-paths.cjs');
 const {
+  MAX_CUSTOM_PROFILE_MEMORY_MB,
+  assertSafeCustomProfileDeletion,
+  assertUniqueCustomProfileDirectory,
+  normalizeCustomProfiles,
+  validateCustomProfileFields,
+} = require('./custom-profiles.cjs');
+const {
   deleteScreenshot,
   getScreenshotsDirectory,
   listScreenshots,
@@ -55,7 +72,10 @@ const SUPPORTED_LOADERS = new Set(['vanilla', 'fabric', 'forge']);
 const GAME_VERSION_MIN = [1, 8, 0];
 const GAME_VERSION_MAX = [26, 3, 0];
 const WESTRON_SKIN_API_BASE_URL = process.env.WESTRON_SKIN_API_BASE_URL || 'https://westronskin.sytes.net';
-const westronApi = createWestronApiClient({ baseUrl: WESTRON_SKIN_API_BASE_URL });
+const westronApi = createWestronApiClient({
+  baseUrl: WESTRON_SKIN_API_BASE_URL,
+  fetchImpl: (url, options) => net.fetch(url, options),
+});
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const WESTRON_AUTH_FILE = () => path.join(app.getPath('userData'), 'westron-auth.bin');
 const MICROSOFT_AUTH_FILE = () => path.join(app.getPath('userData'), 'microsoft-auth.bin');
@@ -63,6 +83,7 @@ let minecraftKitPromise;
 let minecraftVersionsCache = { expiresAt: 0, versions: [] };
 let updateStatus = { status: 'idle', currentVersion: DISPLAY_VERSION, percent: 0 };
 let updateCheckPromise = null;
+let nativePerformanceThemeEnabled = true;
 const activeGameSessions = new Set();
 const refreshWestronAuth = createWestronAuthRefresher({
   readCredentials: readWestronAuth,
@@ -89,8 +110,39 @@ function isSupportedGameVersion(value) {
     || (typeof value === 'string' && /^(?:\d{2}\.\d+-snapshot-\d+|\d{2}w\d{2}[a-z])$/i.test(value));
 }
 
+async function assertValidGameOptions(gameVersion, loader) {
+  if (!SUPPORTED_LOADERS.has(loader)) throw new Error('Mod yükleyicisi geçersiz.');
+  await assertKnownMinecraftVersion(gameVersion);
+  if (loader === 'fabric' && /^\d+\.\d+/.test(gameVersion)) {
+    const [major, minor] = gameVersion.split('.').map(Number);
+    if (major === 1 && minor < 14) {
+      throw new Error('Fabric bu Minecraft sürümünü desteklemiyor; Vanilla veya Forge seçin.');
+    }
+  }
+}
+
 function getInstanceDir(minecraftDir, gameVersion, loader) {
   return path.join(minecraftDir, 'westron-profiles', gameVersion, loader);
+}
+
+function getSelectedCustomProfile(settings) {
+  return settings.customProfiles.find((profile) => profile.id === settings.selectedCustomProfileId) ?? null;
+}
+
+function getMaxCustomMemoryMb() {
+  const totalMemoryMb = Math.floor(os.totalmem() / (1024 * 1024));
+  const availableMemoryMb = Math.floor((totalMemoryMb * 0.75) / 256) * 256;
+  return Math.max(1024, Math.min(MAX_CUSTOM_PROFILE_MEMORY_MB, availableMemoryMb));
+}
+
+function isStandardProfileDirectory(directory, minecraftDir) {
+  const profilesRoot = path.resolve(minecraftDir, 'westron-profiles');
+  const resolvedDirectory = path.resolve(directory);
+  if (resolvedDirectory === path.resolve(minecraftDir)) return true;
+  const relativeDirectory = path.relative(profilesRoot, resolvedDirectory);
+  if (!relativeDirectory || relativeDirectory === '.') return true;
+  const segments = relativeDirectory.split(path.sep);
+  return segments.length === 2 && SUPPORTED_LOADERS.has(segments[1].toLowerCase());
 }
 
 function profileVersionIsInstalled(versions, gameVersion, loader) {
@@ -267,10 +319,15 @@ async function readSettings() {
       await migrateLegacyMinecraftProfiles(legacyDirectory, targetMinecraftDir);
     }
   }
+  const minecraftDir = process.platform === 'win32'
+    ? targetMinecraftDir
+    : (typeof saved.minecraftDir === 'string' ? saved.minecraftDir : targetMinecraftDir);
+  const customProfiles = normalizeCustomProfiles(saved.customProfiles);
+  if (customProfiles.some((profile) => isStandardProfileDirectory(profile.directory, minecraftDir))) {
+    throw new Error('Özel profil için standart oyun profillerinden farklı bir klasör seçin.');
+  }
   const settings = {
-    minecraftDir: process.platform === 'win32'
-      ? targetMinecraftDir
-      : (typeof saved.minecraftDir === 'string' ? saved.minecraftDir : targetMinecraftDir),
+    minecraftDir,
     offlineUsername: typeof saved.offlineUsername === 'string' ? saved.offlineUsername : 'Player',
     gameVersion: isSupportedGameVersion(saved.gameVersion) ? saved.gameVersion : GAME_VERSION,
     loader: SUPPORTED_LOADERS.has(saved.loader) ? saved.loader : DEFAULT_LOADER,
@@ -280,6 +337,12 @@ async function readSettings() {
     profileNoticeDismissed: saved.profileNoticeDismissed === true,
     gameBehavior: ['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(saved.gameBehavior)
       ? saved.gameBehavior : 'close-on-game-exit',
+    customProfiles,
+    selectedCustomProfileId: typeof saved.selectedCustomProfileId === 'string'
+      && Array.isArray(saved.customProfiles)
+      && saved.customProfiles.some((profile) => profile?.id === saved.selectedCustomProfileId)
+      ? saved.selectedCustomProfileId
+      : null,
   };
   if (process.platform === 'win32') {
     await saveSettings(settings);
@@ -407,6 +470,88 @@ async function westronLogin({ email, password }) {
   const credentials = await westronApi.login({ email, password });
   await saveWestronAuth(credentials);
   return credentials.account;
+}
+
+async function withWestronApiAccess(operation) {
+  const credentials = await readWestronAuth();
+  if (!credentials) throw new Error('Önce Westron hesabınızla giriş yapın.');
+  try {
+    return await operation(credentials.accessToken);
+  } catch (error) {
+    if (error.status !== 401) throw error;
+    const renewed = await refreshWestronAuth(credentials);
+    return operation(renewed.accessToken);
+  }
+}
+
+async function westronListFriends() {
+  return withWestronApiAccess((accessToken) => westronApi.listFriends(accessToken));
+}
+
+async function westronSendFriendRequest({ username }) {
+  if (typeof username !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(username)) {
+    throw new Error('Westron kullanıcı adı geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.sendFriendRequest(username, accessToken));
+}
+
+async function westronRespondToFriendRequest({ requestId, accept }) {
+  if (typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/i.test(requestId) || typeof accept !== 'boolean') {
+    throw new Error('Arkadaşlık isteği bilgisi geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.respondFriendRequest(requestId, accept, accessToken));
+}
+
+async function westronRemoveFriend({ userId }) {
+  if (typeof userId !== 'string' || !userId.trim() || userId.length > 64) {
+    throw new Error('Arkadaş hesabı geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.removeFriend(userId, accessToken));
+}
+
+async function westronUpdatePresence({ inGame }) {
+  if (typeof inGame !== 'boolean') throw new Error('Oyuncu durumu geçersiz.');
+  return withWestronApiAccess((accessToken) => westronApi.updatePresence(inGame, accessToken));
+}
+
+async function westronSendEphemeralMessage({ recipientUserId, body }) {
+  if (typeof recipientUserId !== 'string' || !recipientUserId.trim() || recipientUserId.length > 64
+    || typeof body !== 'string' || body.length > 2000 || !body.trim()) {
+    throw new Error('Mesaj bilgileri geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.sendEphemeralMessage(recipientUserId, body, accessToken));
+}
+
+async function westronListEphemeralMessages() {
+  return withWestronApiAccess((accessToken) => westronApi.listEphemeralMessages(accessToken));
+}
+
+async function westronConsumeEphemeralMessage({ messageId }) {
+  if (typeof messageId !== 'string' || !/^[0-9a-f-]{36}$/i.test(messageId)) {
+    throw new Error('Mesaj kimliği geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.consumeEphemeralMessage(messageId, accessToken));
+}
+
+async function westronGetVoiceCallIceServers() {
+  return withWestronApiAccess((accessToken) => westronApi.getVoiceCallIceServers(accessToken));
+}
+
+async function westronSendVoiceCallSignal(signal) {
+  if (!signal || typeof signal !== 'object' || Array.isArray(signal)
+    || typeof signal.recipientUserId !== 'string'
+    || typeof signal.callId !== 'string'
+    || !/^[0-9a-f-]{36}$/i.test(signal.callId)
+    || !['offer', 'answer', 'hangup', 'reject'].includes(signal.type)
+    || typeof signal.sdp !== 'string' || signal.sdp.length > 60_000) {
+    throw new Error('Sesli arama sinyali geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.sendVoiceCallSignal(signal, accessToken));
+}
+
+async function westronConsumeVoiceCallSignals() {
+  return withWestronApiAccess((accessToken) => westronApi.consumeVoiceCallSignals(accessToken));
 }
 
 async function westronGetProfile() {
@@ -590,25 +735,39 @@ async function listMods(minecraftDir) {
 
 async function getState() {
   const settings = await readSettings();
-  const gameDirectory = getInstanceDir(settings.minecraftDir, settings.gameVersion, settings.loader);
+  const customProfile = getSelectedCustomProfile(settings);
+  const gameVersion = customProfile?.gameVersion ?? settings.gameVersion;
+  const loader = customProfile?.loader ?? settings.loader;
+  const gameDirectory = customProfile?.directory ?? getInstanceDir(settings.minecraftDir, gameVersion, loader);
   const performanceProfile = await readPerformanceProfile(gameDirectory);
+  syncNativeTitleBar(settings.theme, performanceProfile.mode, nativePerformanceThemeEnabled);
   let loaderInstalled = false;
   try {
     const versions = await fs.readdir(path.join(gameDirectory, 'versions'));
-    loaderInstalled = profileVersionIsInstalled(versions, settings.gameVersion, settings.loader);
+    loaderInstalled = profileVersionIsInstalled(versions, gameVersion, loader);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  const mods = await listMods(gameDirectory);
   const resourcePacksDir = getContentDirectory(gameDirectory, 'resourcepack');
   const shaderPacksDir = getContentDirectory(gameDirectory, 'shader');
-  const resourcePacks = await listFiles(resourcePacksDir, ['.zip']);
-  const shaderPacks = await listFiles(shaderPacksDir, ['.zip']);
+  const [unindexedMods, unindexedResourcePacks, unindexedShaderPacks] = await Promise.all([
+    listMods(gameDirectory),
+    listFiles(resourcePacksDir, ['.zip']),
+    listFiles(shaderPacksDir, ['.zip']),
+  ]);
   const resourcePackInstalls = await readInstallIndex(resourcePacksDir, '.zip');
   const shaderPackInstalls = await readInstallIndex(shaderPacksDir, '.zip');
   const modInstalls = await readInstallIndex(getModsDir(gameDirectory), '.jar');
+  const mods = addProjectIdsToFiles(unindexedMods, modInstalls);
+  const resourcePacks = addProjectIdsToFiles(unindexedResourcePacks, resourcePackInstalls);
+  const shaderPacks = addProjectIdsToFiles(unindexedShaderPacks, shaderPackInstalls);
   return {
     ...settings,
+    gameVersion,
+    loader,
+    selectedCustomProfileId: customProfile?.id ?? null,
+    maxCustomMemoryMb: getMaxCustomMemoryMb(),
+    platform: process.platform,
     gameDirectory,
     gameRunning: activeGameSessions.size > 0,
     version: app.getVersion(),
@@ -617,8 +776,8 @@ async function getState() {
       process.env.MINECRAFT_KIT_MSA_CLIENT_ID || 'bcfe67e2-a947-4621-a650-81db09205316'
     ),
     loaderInstalled,
-    fabricInstalled: settings.loader === 'fabric' && loaderInstalled,
-    westronModSupported: settings.loader === 'fabric' && settings.gameVersion === GAME_VERSION,
+    fabricInstalled: loader === 'fabric' && loaderInstalled,
+    westronModSupported: loader === 'fabric' && gameVersion === GAME_VERSION,
     javaAvailable: await findJava(gameDirectory),
     mods,
     resourcePacks,
@@ -628,8 +787,8 @@ async function getState() {
     modrinthModProjects: Object.keys(modInstalls),
     performanceMode: performanceProfile.mode,
     performanceShaderEnabled: performanceProfile.mode === 'quality' && performanceProfile.includesShader,
-    menuModInstalled: settings.loader === 'fabric' && settings.gameVersion === GAME_VERSION
-      && mods.some((mod) => mod.name === `westron-client-skin-${RELEASE_VERSION}.jar`),
+    menuModInstalled: loader === 'fabric' && gameVersion === GAME_VERSION
+      && mods.some((mod) => mod.name === `westron-launcher-${RELEASE_VERSION}.jar`),
   };
 }
 
@@ -692,8 +851,17 @@ async function findJava(minecraftDir) {
 }
 
 async function installBundledMenu(minecraftDir) {
-  const jarName = `westron-client-skin-${RELEASE_VERSION}.jar`;
-  const legacyJarNames = ['westron-client-skin-1.0.jar', 'westron-client-skin-1.0.0.jar', 'westron-client-menu-1.0.0.jar', 'nocturne-menu-1.0.0.jar'];
+  const jarName = `westron-launcher-${RELEASE_VERSION}.jar`;
+  const legacyJarNames = [
+    'westron-client-skin-1.0.jar',
+    'westron-client-skin-1.0.0.jar',
+    'westron-client-skin-1.0.1.jar',
+    'westron-client-skin-1.0.2.jar',
+    'westron-client-skin-1.0.3.jar',
+    'westron-client-skin-1.0.4.jar',
+    'westron-client-menu-1.0.0.jar',
+    'nocturne-menu-1.0.0.jar',
+  ];
   const sourcePath = app.isPackaged
     ? path.join(process.resourcesPath, jarName)
     : path.join(__dirname, '..', 'fabric-mod', 'build', 'libs', jarName);
@@ -707,9 +875,9 @@ async function installBundledMenu(minecraftDir) {
   }
   const modsDir = getModsDir(minecraftDir);
   await fs.mkdir(modsDir, { recursive: true });
+  await fs.copyFile(sourcePath, path.join(modsDir, jarName));
   await Promise.all(legacyJarNames.map((legacyJarName) =>
     fs.rm(path.join(modsDir, legacyJarName), { force: true })));
-  await fs.copyFile(sourcePath, path.join(modsDir, jarName));
 }
 
 async function writeLocalSkinIdentity(minecraftDir, minecraftUsername) {
@@ -785,11 +953,11 @@ async function getMinecraftKit() {
   return minecraftKitPromise;
 }
 
-async function resolveGameTarget(minecraftDir, gameVersion, loader) {
+async function resolveGameTarget(minecraftDir, gameVersion, loader, customProfile = null) {
   const { kit, Loaders, asMinecraftVersionId } = await getMinecraftKit();
   const target = await kit.targets.resolve({
-    id: `westron-client-${gameVersion}-${loader}`,
-    directory: getInstanceDir(minecraftDir, gameVersion, loader),
+    id: customProfile ? `westron-custom-${customProfile.id}` : `westron-client-${gameVersion}-${loader}`,
+    directory: customProfile?.directory ?? getInstanceDir(minecraftDir, gameVersion, loader),
     minecraft: { version: asMinecraftVersionId(gameVersion) },
     loader: { type: Loaders[loader.toUpperCase()] },
   });
@@ -819,12 +987,15 @@ async function runMinecraftInstallWithProgress(kit, plan, options = {}) {
 async function installGameProfile() {
   const state = await getState();
   if (!state.loaderInstalled) {
-    const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
+    const customProfile = state.customProfiles.find((profile) => profile.id === state.selectedCustomProfileId) ?? null;
+    const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader, customProfile);
     await fs.mkdir(state.gameDirectory, { recursive: true });
     const plan = await kit.install.plan(target);
     await runMinecraftInstallWithProgress(kit, plan);
   }
-  if (state.westronModSupported) await installBundledMenu(state.gameDirectory);
+  if (state.westronModSupported && !state.menuModInstalled) {
+    await installBundledMenu(state.gameDirectory);
+  }
   return `Minecraft ${state.gameVersion} ${state.loader} profili hazır.`;
 }
 
@@ -833,7 +1004,8 @@ async function installFabric() {
   if (state.loader !== 'fabric' || state.gameVersion !== GAME_VERSION) {
     throw new Error('Bu işlem yalnızca Minecraft 26.3 Fabric profili için kullanılabilir.');
   }
-  const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
+  const customProfile = state.customProfiles.find((profile) => profile.id === state.selectedCustomProfileId) ?? null;
+  const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader, customProfile);
   const plan = await kit.install.plan(target);
   const { DownloadCategories } = await getMinecraftKit();
   await runMinecraftInstallWithProgress(kit, plan, {
@@ -864,17 +1036,26 @@ async function launchGame({ mode, offlineUsername }) {
 
   const microsoftSession = mode === 'microsoft' ? await microsoftAuth.getLaunchSession() : null;
   const username = microsoftSession?.account.username ?? offlineUsername;
-  const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader);
+  const customProfile = state.customProfiles.find((profile) => profile.id === state.selectedCustomProfileId) ?? null;
+  const { kit, target } = await resolveGameTarget(state.minecraftDir, state.gameVersion, state.loader, customProfile);
   const plan = await kit.install.plan(target);
   const { AuthModes } = await getMinecraftKit();
   await runMinecraftInstallWithProgress(kit, plan);
-  if (state.westronModSupported) await installBundledMenu(state.gameDirectory);
+  if (state.westronModSupported && !state.menuModInstalled) {
+    await installBundledMenu(state.gameDirectory);
+  }
   await writeLocalSkinIdentity(state.gameDirectory, username);
 
   const composition = await kit.launch.compose(target, {
     auth: microsoftSession?.auth ?? { mode: AuthModes.OFFLINE, username },
     launcherName: 'Westron Launcher',
     launcherVersion: app.getVersion(),
+    ...(customProfile ? {
+      memory: {
+        minMb: Math.min(1024, customProfile.memoryMb),
+        maxMb: customProfile.memoryMb,
+      },
+    } : {}),
   });
   const session = kit.launch.run(composition);
   activeGameSessions.add(session);
@@ -912,7 +1093,7 @@ function modrinthHeaders() {
 
 async function getMinecraftVersions() {
   if (Date.now() < minecraftVersionsCache.expiresAt) return minecraftVersionsCache.versions;
-  const response = await fetch('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', {
+  const response = await net.fetch('https://launchermeta.mojang.com/mc/game/version_manifest_v2.json', {
     headers: modrinthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -955,7 +1136,7 @@ async function searchModrinth(type, query, gameVersion, loader, offset = 0) {
     offset: String(offset),
     index: 'downloads',
   });
-  const response = await fetch(`https://api.modrinth.com/v2/search?${params}`, {
+  const response = await net.fetch(`https://api.modrinth.com/v2/search?${params}`, {
     headers: modrinthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -976,6 +1157,36 @@ async function searchModrinth(type, query, gameVersion, loader, offset = 0) {
   return { projects, totalHits: data.total_hits, offset };
 }
 
+async function getModrinthProjectMetadata(projectIds) {
+  if (!Array.isArray(projectIds) || projectIds.length > 500
+    || projectIds.some((projectId) => typeof projectId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(projectId))) {
+    throw new Error('Modrinth proje bilgisi isteği geçersiz.');
+  }
+  const metadata = {};
+  const uniqueIds = [...new Set(projectIds)];
+  for (let offset = 0; offset < uniqueIds.length; offset += 100) {
+    const ids = uniqueIds.slice(offset, offset + 100);
+    if (!ids.length) continue;
+    const response = await net.fetch(`https://api.modrinth.com/v2/projects?ids=${encodeURIComponent(JSON.stringify(ids))}`, {
+      headers: modrinthHeaders(),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error(`Modrinth mod bilgileri alınamadı (${response.status}).`);
+    const projects = await response.json();
+    if (!Array.isArray(projects)) throw new Error('Modrinth mod bilgileri beklenen biçimde değil.');
+    for (const project of projects) {
+      if (typeof project?.id === 'string') {
+        metadata[project.id] = {
+          title: typeof project.title === 'string' ? project.title : '',
+          iconUrl: typeof project.icon_url === 'string' ? project.icon_url : '',
+          description: typeof project.description === 'string' ? project.description : '',
+        };
+      }
+    }
+  }
+  return metadata;
+}
+
 async function getProjectVersions(projectId, type = 'mod', gameVersion = GAME_VERSION, loader = DEFAULT_LOADER) {
   assertModrinthType(type);
   await assertKnownMinecraftVersion(gameVersion);
@@ -985,7 +1196,7 @@ async function getProjectVersions(projectId, type = 'mod', gameVersion = GAME_VE
     filters.loaders = JSON.stringify([loader]);
   }
   const params = new URLSearchParams(filters);
-  const response = await fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(projectId)}/version?${params}`, {
+  const response = await net.fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(projectId)}/version?${params}`, {
     headers: modrinthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -1001,7 +1212,7 @@ async function getCompatibleVersion(projectId, gameVersion, loader) {
 }
 
 async function getVersionById(versionId) {
-  const response = await fetch(`https://api.modrinth.com/v2/version/${encodeURIComponent(versionId)}`, {
+  const response = await net.fetch(`https://api.modrinth.com/v2/version/${encodeURIComponent(versionId)}`, {
     headers: modrinthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -1011,7 +1222,7 @@ async function getVersionById(versionId) {
 }
 
 async function getProjectTitle(projectId) {
-  const response = await fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(projectId)}`, {
+  const response = await net.fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(projectId)}`, {
     headers: modrinthHeaders(),
     signal: AbortSignal.timeout(15000),
   });
@@ -1045,7 +1256,7 @@ async function downloadModrinthFile(file, directory, expectedExtension) {
     if (error.code !== 'ENOENT') throw error;
   }
 
-  const download = await fetch(downloadUrl, { signal: AbortSignal.timeout(120000) });
+  const download = await net.fetch(downloadUrl, { signal: AbortSignal.timeout(120000) });
   if (!download.ok) throw new Error(`Modrinth dosyası indirilemedi (${download.status}).`);
   const contents = Buffer.from(await download.arrayBuffer());
   if (createHash('sha1').update(contents).digest('hex') !== expectedSha1.toLowerCase()) {
@@ -1116,7 +1327,9 @@ async function resolveModInstallPlan(projectId, gameVersion, loader, selectedVer
       return plan;
     },
   );
-  if (!result) throw new Error(`Minecraft ${gameVersion} ${loader} ile uyumlu mod sürümü bulunamadı.`);
+  if (!result) {
+    throw new ModCompatibilityError(`Minecraft ${gameVersion} ${loader} ile uyumlu mod sürümü bulunamadı.`);
+  }
 
   const modsDir = getModsDir(state.gameDirectory);
   await fs.mkdir(modsDir, { recursive: true });
@@ -1244,7 +1457,7 @@ async function installPerformancePreset(mode, includeShader) {
   const skipped = [];
   let irisAvailable = false;
   let shaderEnabled = false;
-  const projects = getPerformancePresetProjects(mode);
+  const projects = getPerformancePresetProjects(mode, state.loader);
   if (mode === 'quality' && includeShader) projects.push(SHADER_LOADER);
 
   for (const project of projects) {
@@ -1264,14 +1477,25 @@ async function installPerformancePreset(mode, includeShader) {
   }
 
   if (mode === 'quality' && includeShader && irisAvailable) {
-    const result = await installModrinthPack('shader', QUALITY_SHADER.id, state.gameVersion, null);
-    installed.push(QUALITY_SHADER.title);
-    shaderEnabled = true;
-    if (!existingShaderInstalls[QUALITY_SHADER.id] || previouslyManaged.has(`shader:${QUALITY_SHADER.id}`)) {
-      nextManagedFiles.push({ type: 'shader', projectId: QUALITY_SHADER.id, fileName: result.fileName });
+    try {
+      const result = await installModrinthPack('shader', QUALITY_SHADER.id, state.gameVersion, null);
+      installed.push(QUALITY_SHADER.title);
+      shaderEnabled = true;
+      if (!existingShaderInstalls[QUALITY_SHADER.id] || previouslyManaged.has(`shader:${QUALITY_SHADER.id}`)) {
+        nextManagedFiles.push({ type: 'shader', projectId: QUALITY_SHADER.id, fileName: result.fileName });
+      }
+    } catch (error) {
+      if (!(error instanceof ModCompatibilityError)) throw error;
+      skipped.push(QUALITY_SHADER.title);
     }
   } else if (mode === 'quality' && includeShader) {
     skipped.push(QUALITY_SHADER.title);
+  }
+
+  if (installed.length === 0) {
+    throw new ModCompatibilityError(
+      `Minecraft ${state.gameVersion} ${state.loader} profili için uyumlu performans/kalite modları bulunamadı. Fabric profiliyle tekrar deneyin.`,
+    );
   }
 
   const uniqueManagedFiles = [...new Map(nextManagedFiles.map((file) => [`${file.type}:${file.projectId}`, file])).values()];
@@ -1300,11 +1524,11 @@ async function installModrinthPack(type, projectId, gameVersion, selectedVersion
     : selectCompatibleVersion(versions, gameVersion);
   if (!version) {
     const label = type === 'resourcepack' ? 'kaynak paketi' : 'shader paketi';
-    throw new Error(`Minecraft ${gameVersion} ile uyumlu ${label} sürümü bulunamadı.`);
+    throw new ModCompatibilityError(`Minecraft ${gameVersion} ile uyumlu ${label} sürümü bulunamadı.`);
   }
   const file = version.files?.find((item) => item.primary && item.filename?.toLowerCase().endsWith('.zip'))
     || version.files?.find((item) => item.filename?.toLowerCase().endsWith('.zip'));
-  if (!file) throw new Error('Bu Modrinth sürümünde indirilebilir ZIP dosyası bulunamadı.');
+  if (!file) throw new ModCompatibilityError('Bu Modrinth sürümünde indirilebilir ZIP dosyası bulunamadı.');
   const directory = getContentDirectory((await getState()).gameDirectory, type);
   const installIndex = await readInstallIndex(directory, '.zip');
   const result = await downloadModrinthFile(file, directory, '.zip');
@@ -1318,13 +1542,27 @@ async function installModrinthPack(type, projectId, gameVersion, selectedVersion
   };
 }
 
+function syncNativeTitleBar(theme, performanceMode = 'default', performanceThemeEnabled = true) {
+  if (process.platform !== 'win32') return;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.setTitleBarOverlay(getTitleBarOverlayOptions(theme, performanceMode, performanceThemeEnabled));
+    }
+  }
+}
+
 function createWindow() {
+  const useNativeTitleBar = process.platform === 'win32';
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
-    minWidth: 1080,
-    minHeight: 720,
-    frame: false,
+    minWidth: 320,
+    minHeight: 240,
+    frame: useNativeTitleBar,
+    ...(useNativeTitleBar ? {
+      titleBarStyle: 'hidden',
+      titleBarOverlay: getTitleBarOverlayOptions('dark', 'default', true),
+    } : {}),
     backgroundColor: '#0b0d11',
     title: 'Westron Launcher',
     icon: process.platform === 'win32'
@@ -1369,6 +1607,21 @@ function createWindow() {
   }
 }
 
+function setupMediaPermissions() {
+  const productionRendererUrl = pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).href;
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const allowed = Boolean(BrowserWindow.fromWebContents(webContents))
+      && canGrantAudioMediaPermission({
+        permission,
+        mediaTypes: details?.mediaTypes,
+        url: webContents.getURL(),
+        isDevelopment: process.env.NODE_ENV === 'development',
+        productionRendererUrl,
+      });
+    callback(allowed);
+  });
+}
+
 ipcMain.handle('app:state', getState);
 ipcMain.handle('app:microsoft-account', () => microsoftAuth.getAccount());
 ipcMain.handle('app:microsoft-sign-in', () => microsoftAuth.signIn());
@@ -1409,12 +1662,28 @@ ipcMain.handle('app:choose-minecraft-dir', async () => {
   }
   return getState();
 });
+ipcMain.handle('app:choose-custom-profile-directory', async () => {
+  const settings = await readSettings();
+  const result = await dialog.showOpenDialog({
+    title: 'Özel profil klasörünü seç',
+    defaultPath: settings.minecraftDir,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
+});
 ipcMain.handle('app:open-profiles-folder', async () => {
   const { minecraftDir } = await readSettings();
   const directory = path.join(minecraftDir, 'westron-profiles');
   await fs.mkdir(directory, { recursive: true });
   const error = await shell.openPath(directory);
   if (error) throw new Error(`Westron Profiles klasörü açılamadı: ${error}`);
+});
+ipcMain.handle('app:open-selected-profile-folder', async () => {
+  const { gameDirectory } = await getState();
+  await fs.mkdir(gameDirectory, { recursive: true });
+  const error = await shell.openPath(gameDirectory);
+  if (error) throw new Error(`Seçili oyun profili klasörü açılamadı: ${error}`);
 });
 ipcMain.handle('app:save-game-behavior', async (_event, behavior) => {
   if (!['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(behavior)) {
@@ -1425,15 +1694,156 @@ ipcMain.handle('app:save-game-behavior', async (_event, behavior) => {
   return getState();
 });
 ipcMain.handle('app:game-versions', getMinecraftVersions);
-ipcMain.handle('app:save-game-options', async (_event, gameVersion, loader, confirmNewProfile = false, dismissNotice = false) => {
-  if (!SUPPORTED_LOADERS.has(loader)) throw new Error('Mod yükleyicisi geçersiz.');
-  await assertKnownMinecraftVersion(gameVersion);
-  if (loader === 'fabric' && /^\d+\.\d+/.test(gameVersion)) {
-    const [major, minor] = gameVersion.split('.').map(Number);
-    if (major === 1 && minor < 14) {
-      throw new Error('Fabric bu Minecraft sürümünü desteklemiyor; Vanilla veya Forge seçin.');
+ipcMain.handle('app:set-title-bar-theme', (_event, theme, performanceMode, performanceThemeEnabled) => {
+  if (theme !== 'dark' && theme !== 'light') throw new Error('Arayüz teması geçersiz.');
+  if (!['default', 'performance', 'quality'].includes(performanceMode)) {
+    throw new Error('Performans teması geçersiz.');
+  }
+  if (typeof performanceThemeEnabled !== 'boolean') {
+    throw new Error('Performans teması seçimi geçersiz.');
+  }
+  nativePerformanceThemeEnabled = performanceThemeEnabled;
+  syncNativeTitleBar(theme, performanceMode, performanceThemeEnabled);
+});
+ipcMain.handle('app:select-custom-profile', async (_event, profileId) => {
+  if (profileId !== null && typeof profileId !== 'string') {
+    throw new Error('Seçilen özel profil geçersiz.');
+  }
+  const settings = await readSettings();
+  if (profileId && !settings.customProfiles.some((profile) => profile.id === profileId)) {
+    throw new Error('Seçilen özel profil bulunamadı.');
+  }
+  await saveSettings({ ...settings, selectedCustomProfileId: profileId || null });
+  return getState();
+});
+ipcMain.handle('app:create-custom-profile', async (_event, input) => {
+  const settings = await readSettings();
+  const maxMemoryMb = getMaxCustomMemoryMb();
+  const fields = validateCustomProfileFields(input, maxMemoryMb);
+  await assertValidGameOptions(fields.gameVersion, fields.loader);
+
+  const id = randomUUID();
+  const directory = fields.directory || path.join(
+    settings.minecraftDir,
+    'westron-profiles',
+    'custom',
+    id,
+  );
+  if (isStandardProfileDirectory(directory, settings.minecraftDir)) {
+    throw new Error('Özel profil için standart oyun profillerinden farklı bir klasör seçin.');
+  }
+  assertUniqueCustomProfileDirectory(directory, settings.customProfiles);
+  const profile = { id, ...fields, directory: path.resolve(directory) };
+  await fs.mkdir(profile.directory, { recursive: true });
+  await saveSettings({
+    ...settings,
+    customProfiles: [...settings.customProfiles, profile],
+    selectedCustomProfileId: id,
+  });
+  return getState();
+});
+ipcMain.handle('app:update-custom-profile', async (_event, profileId, input) => {
+  if (typeof profileId !== 'string') throw new Error('Özel profil kimliği geçersiz.');
+  const settings = await readSettings();
+  const currentProfile = settings.customProfiles.find((profile) => profile.id === profileId);
+  if (!currentProfile) throw new Error('Düzenlenecek özel profil bulunamadı.');
+
+  const fields = validateCustomProfileFields(
+    { ...input, directory: currentProfile.directory },
+    Math.max(getMaxCustomMemoryMb(), currentProfile.memoryMb),
+  );
+  await assertValidGameOptions(fields.gameVersion, fields.loader);
+  const customProfiles = settings.customProfiles.map((profile) =>
+    profile.id === profileId ? { id: profileId, ...fields, directory: currentProfile.directory } : profile,
+  );
+  await saveSettings({ ...settings, customProfiles });
+  return getState();
+});
+ipcMain.handle('app:delete-custom-profile', async (_event, profileId, deleteFiles) => {
+  if (typeof profileId !== 'string' || typeof deleteFiles !== 'boolean') {
+    throw new Error('Özel profil silme isteği geçersiz.');
+  }
+  const settings = await readSettings();
+  const profile = settings.customProfiles.find((entry) => entry.id === profileId);
+  if (!profile) throw new Error('Silinecek özel profil bulunamadı.');
+
+  let stagedDirectory = null;
+  if (deleteFiles) {
+    if (activeGameSessions.size > 0) {
+      throw new Error('Oyun çalışırken profil dosyaları silinemez.');
+    }
+
+    let actualDirectory;
+    try {
+      actualDirectory = await fs.realpath(profile.directory);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      actualDirectory = null;
+    }
+    if (actualDirectory) {
+      const directoryInfo = await fs.lstat(profile.directory);
+      if (directoryInfo.isSymbolicLink() || !directoryInfo.isDirectory()) {
+        throw new Error('Profil klasörü gerçek bir klasör değil; dosyalar güvenli şekilde silinemez.');
+      }
+      if (isStandardProfileDirectory(actualDirectory, settings.minecraftDir)) {
+        throw new Error('Bu klasör güvenli şekilde silinemez; başka bir profil veya önemli klasörle çakışıyor.');
+      }
+      const existingProfiles = await Promise.all(settings.customProfiles.map(async (entry) => {
+        if (entry.id === profileId) return entry;
+        try {
+          return { ...entry, directory: await fs.realpath(entry.directory) };
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+          return entry;
+        }
+      }));
+      assertSafeCustomProfileDeletion(actualDirectory, {
+        homeDirectory: app.getPath('home'),
+        minecraftDir: settings.minecraftDir,
+        profiles: existingProfiles,
+        profileId,
+      });
+      stagedDirectory = path.join(path.dirname(profile.directory), `.westron-profile-delete-${randomUUID()}`);
+      await fs.rename(profile.directory, stagedDirectory);
     }
   }
+
+  const nextSettings = {
+    ...settings,
+    customProfiles: settings.customProfiles.filter((entry) => entry.id !== profileId),
+    selectedCustomProfileId: settings.selectedCustomProfileId === profileId
+      ? null
+      : settings.selectedCustomProfileId,
+  };
+  try {
+    await saveSettings(nextSettings);
+  } catch (error) {
+    if (stagedDirectory) {
+      try {
+        await fs.rename(stagedDirectory, profile.directory);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [error, restoreError],
+          'Profil ayarları kaydedilemedi ve oyun klasörü eski konumuna geri alınamadı.',
+        );
+      }
+    }
+    throw error;
+  }
+
+  let cleanupError = null;
+  if (stagedDirectory) {
+    try {
+      await fs.rm(stagedDirectory, { recursive: true, force: true });
+    } catch (error) {
+      console.error(`Özel profil klasörü silinemedi: ${profile.name}`, error);
+      cleanupError = error.message;
+    }
+  }
+  return { state: await getState(), cleanupError };
+});
+ipcMain.handle('app:save-game-options', async (_event, gameVersion, loader, confirmNewProfile = false, dismissNotice = false) => {
+  await assertValidGameOptions(gameVersion, loader);
   const settings = await readSettings();
   const profileDirectory = getInstanceDir(settings.minecraftDir, gameVersion, loader);
   let profileExists = true;
@@ -1450,6 +1860,7 @@ ipcMain.handle('app:save-game-options', async (_event, gameVersion, loader, conf
     ...settings,
     gameVersion,
     loader,
+    selectedCustomProfileId: null,
     profileNoticeDismissed: settings.profileNoticeDismissed || dismissNotice,
   };
   await saveSettings(nextSettings);
@@ -1503,6 +1914,12 @@ ipcMain.handle('app:project-versions', async (_event, type, projectId) => {
     gameVersions: version.gameVersions ?? version.game_versions,
     loaders: version.loaders,
   }));
+});
+ipcMain.handle('app:project-metadata', (_event, projectIds) =>
+  getModrinthProjectMetadata(projectIds));
+ipcMain.handle('app:mod-archive-metadata', async (_event, fileNames) => {
+  const state = await getState();
+  return getModArchiveMetadata(getModsDir(state.gameDirectory), fileNames);
 });
 ipcMain.handle('app:install-mod', async (_event, projectId, selectedVersionId, confirmedDependencyIds) => {
   const state = await getState();
@@ -1624,6 +2041,17 @@ registerWestronIpcHandlers(ipcMain, {
   uploadCape: westronUploadCape,
   deleteCape: westronDeleteCape,
   logout: westronLogout,
+  listFriends: westronListFriends,
+  sendFriendRequest: westronSendFriendRequest,
+  respondFriendRequest: westronRespondToFriendRequest,
+  removeFriend: westronRemoveFriend,
+  updatePresence: westronUpdatePresence,
+  sendEphemeralMessage: westronSendEphemeralMessage,
+  listEphemeralMessages: westronListEphemeralMessages,
+  consumeEphemeralMessage: westronConsumeEphemeralMessage,
+  getVoiceCallIceServers: westronGetVoiceCallIceServers,
+  sendVoiceCallSignal: westronSendVoiceCallSignal,
+  consumeVoiceCallSignals: westronConsumeVoiceCallSignals,
 });
 ipcMain.handle('app:remove-mod', async (_event, fileName) => {
   if (typeof fileName !== 'string' || path.basename(fileName) !== fileName || !fileName.toLowerCase().endsWith('.jar')) {
@@ -1704,6 +2132,7 @@ function setupApplicationMenu() {
 }
 
 app.whenReady().then(() => {
+  setupMediaPermissions();
   setupApplicationMenu();
   configureAutoUpdater();
   createWindow();

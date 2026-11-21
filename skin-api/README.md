@@ -16,6 +16,15 @@ Fastify tabanlı, mevcut web sitesinden ve Microsoft/Minecraft girişinden ayrı
 | `POST` | `/api/v1/auth/request-password-reset` | `{ email }` için parola sıfırlama e-postası ister |
 | `POST` | `/api/v1/auth/reset-password` | `{ email, token, newPassword }` ile parolayı değiştirir ve tüm oturumları kapatır |
 | `GET` | `/api/v1/me` | Kimliği doğrulanmış kullanıcının profili |
+| `GET` | `/api/v1/friends` | Arkadaşları, çevrimiçi/oyunda durumunu ve istekleri listeler |
+| `POST` | `/api/v1/friends/requests` | Westron kullanıcı adına arkadaşlık isteği gönderir |
+| `POST` | `/api/v1/friends/requests/{requestId}/respond` | Gelen isteği kabul eder veya reddeder |
+| `DELETE` | `/api/v1/friends/{friendUserId}` | Arkadaşı kaldırır; bekleyen mesaj ve arama sinyallerini siler |
+| `POST` | `/api/v1/presence` | Launcher'ın çevrimiçi/oyunda durumunu günceller |
+| `POST` / `GET` | `/api/v1/friends/messages` ve `/inbox` | Arkadaşa tek sefer açılabilen mesaj gönderir; liste yalnızca mesaj özetlerini verir |
+| `POST` | `/api/v1/friends/messages/{messageId}/consume` | Mesajı alıcı için atomik olarak okur ve siler |
+| `GET` | `/api/v1/friends/calls/ice-servers` | WebRTC ses araması için STUN/TURN sunucu ayarlarını verir |
+| `POST` / `GET` | `/api/v1/friends/calls/signals` | Arkadaşlar arası kısa ömürlü WebRTC arama sinyallerini iletir |
 | `PUT` | `/api/v1/me/minecraft-profile` | Minecraft oyun adını Westron profiline bağlar |
 | `POST` / `PUT` / `DELETE` | `/api/v1/me/skin` | İlk skin yükleme / değiştirme / silme |
 | `POST` / `PUT` / `DELETE` | `/api/v1/me/cape` | Pelerin yükleme / değiştirme / silme |
@@ -27,6 +36,10 @@ Fastify tabanlı, mevcut web sitesinden ve Microsoft/Minecraft girişinden ayrı
 Skin istekleri multipart/form-data içindeki `skin` alanıyla yüklenir. PNG imzası ve içerik dekoderi kontrol edilir; yalnızca 64x64 veya 64x32 piksel ve en fazla 1 MiB kabul edilir. `X-Skin-Model` isteğe bağlı `classic`/`slim` başlığıdır. Hesap parolaları Argon2id, e-posta doğrulama/parola sıfırlama kodları yalnızca SHA-256 özetiyle tutulur. Access ve refresh token'lar da veritabanında yalnızca hash olarak saklanır; refresh token rotasyonu eski token tekrar kullanımında oturumu iptal eder.
 
 Herkese açık skin ve pelerin PNG uç noktaları WebGL tabanlı 3D önizleyicilerin dokuları canvas'a yükleyebilmesi için `Access-Control-Allow-Origin: *` döndürür; bu yalnızca herkese açık salt-okunur görsel rotalarına uygulanır.
+
+Arkadaşlık ve sosyal rotalar doğrulanmış Westron hesabı gerektirir. Çevrimiçi durumu 45 saniyelik heartbeat ile belirlenir; heartbeat kesilirse kullanıcı çevrimdışı görünür. Gelen mesaj listesinde içerik bulunmaz: alıcı mesajı ilk kez açtığında içerik tek bir veritabanı işlemiyle döndürülüp silinir; açılmayan mesajlar 7 gün sonra silinir. Arama sinyalleri 60 saniye sonra zaman aşımına uğrar.
+
+Sesli aramalar WebRTC kullanır. `STUN_SERVER_URLS` virgülle ayrılmış STUN URL'lerini alır; ayarlanmazsa varsayılan olarak `stun:stun.l.google.com:19302` kullanılır. Daha fazla ağda bağlantı için `TURN_SERVER_URLS`, `TURN_SERVER_USERNAME` ve `TURN_SERVER_CREDENTIAL` değerlerinin üçünü de sunucu ortamında ayarlayın; TURN sunucusu/kimlik bilgileri bu depoda sağlanmaz. TURN kimlik bilgisi launcher'a gömülmez, yalnızca kimliği doğrulanmış ICE ayar isteğine gönderilir; üretimde kısa ömürlü, düzenli yenilenen TURN kimlik bilgileri önerilir. STUN/TURN yapılandırılmadan, kısıtlı NAT veya güvenlik duvarı arkasındaki kullanıcılar arasında arama garanti edilemez.
 
 ## Yerel geliştirme ve test
 
@@ -93,6 +106,10 @@ VDS'ye, Docker'a veya Nginx Proxy Manager'a bu geliştirme sırasında erişilme
    Health yanıtı `{"status":"ok"}` olmalıdır. Domain'in kök sayfasının kurulum öncesi davranışını ayrıca doğrulayın.
 
 Güncelleme kurulum dosyaları büyük olduğundan API sunucusu en fazla 90 dakikalık yavaş HTTP isteklerine izin verecek şekilde yapılandırılmıştır. Bu kod değiştiğinde VDS'de API imajını yeniden derleyip servisi yeniden oluşturun; Nginx Proxy Manager üzerinden `/api/` isteği için kullanılan `client_body_timeout` ve `proxy_read_timeout` ayarlarının da uzun yüklemelere izin verdiğini kontrol edin.
+
+### Arkadaşlar özelliğinin sunucuya dağıtılması
+
+Launcher'daki arkadaşlık, presence, tek kullanımlık mesaj ve sesli arama özellikleri için sunucuda bu depodaki güncel `skin-api` kodu çalışmalıdır. API veritabanı açılışta otomatik olarak şema sürümü 5'e yükseltilir; mevcut `skin-api-data` volume'ünü koruyun. Sunucuya güncel kaynakları aktarıp API container'ını yeniden oluşturduktan sonra `/api/openapi.yaml` içinde `/api/v1/friends` ve `/api/v1/friends/calls/signals` yollarını, ardından `/api/health` yanıtını doğrulayın. TURN ayarlarını (`TURN_SERVER_URLS`, `TURN_SERVER_USERNAME`, `TURN_SERVER_CREDENTIAL`) yalnızca VDS ortamında yapılandırın. API dağıtılana kadar arkadaşlık ekranı uç nokta hatasını gösterebilir; launcher güncellemesi tek başına canlı API'yi değiştirmez.
 
 ### Pelerin yükleme 404 hatası
 

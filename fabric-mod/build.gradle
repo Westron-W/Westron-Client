@@ -6,7 +6,7 @@ version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = 'westron-client-skin'
+    archivesName = 'westron-launcher'
 }
 
 loom {

@@ -1,14 +1,15 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { isAppLanguage, SUPPORTED_LANGUAGES, translate, translateUi, type AppLanguage } from './i18n';
+import FriendsPage from './FriendsPage';
 import {
   ArrowDownToLine, ArrowRight, Box, Camera, Check, ChevronDown, CircleHelp, Compass, Image,
   Cpu, FolderOpen, HardDrive, Layers3, LoaderCircle, Minus,
   Languages, LogOut, Package, Pause, Play, Plus, RefreshCw, RotateCcw, Search, Square,
-  Settings2, ShieldCheck, Shirt, Sparkles, Sun, Trash2, Upload, UserRound, X,
+  Settings2, ShieldCheck, Shirt, Sparkles, Sun, Trash2, Upload, UserRound, Users, X,
 } from 'lucide-react';
 
 type ContentType = 'resourcepack' | 'shader';
-type Page = 'home' | 'mods' | 'resourcepacks' | 'shaders' | 'performance' | 'library' | 'appearance' | 'account' | 'screenshots' | 'settings';
+type Page = 'home' | 'mods' | 'resourcepacks' | 'shaders' | 'performance' | 'library' | 'appearance' | 'account' | 'friends' | 'screenshots' | 'settings';
 type LibrarySection = 'mods' | 'resourcepacks' | 'shaders';
 const IRIS_PROJECT_ID = 'YL57xq9U';
 const AppLanguageContext = createContext<AppLanguage>('en');
@@ -27,6 +28,7 @@ const pageLabels: Record<Page, string> = {
   library: 'Kütüphane',
   appearance: 'Skin & Pelerin',
   account: 'Hesap',
+  friends: 'Arkadaşlar',
   screenshots: 'Ekran Görüntüleri',
   settings: 'Ayarlar',
 };
@@ -75,7 +77,15 @@ export default function App() {
   const [dependencyPrompt, setDependencyPrompt] = useState<{
     projectId: string;
     modName: string;
+    selectedVersionId: string;
     dependencies: ModDependency[];
+  } | null>(null);
+  const [versionPrompt, setVersionPrompt] = useState<{
+    type: 'mod' | ContentType;
+    projectId: string;
+    title: string;
+    versions: ModrinthVersionOption[];
+    selectedVersionId: string;
   } | null>(null);
   const [removalPrompt, setRemovalPrompt] = useState<{
     name: string; size: number; type: 'mod' | ContentType;
@@ -86,6 +96,13 @@ export default function App() {
   const [screenshotStatus, setScreenshotStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [publisherBusy, setPublisherBusy] = useState(false);
   const [librarySection, setLibrarySection] = useState<LibrarySection>('mods');
+  const [libraryQueries, setLibraryQueries] = useState<Record<LibrarySection, string>>({
+    mods: '',
+    resourcepacks: '',
+    shaders: '',
+  });
+  const [libraryProjectMetadata, setLibraryProjectMetadata] = useState<Record<string, ModrinthProjectMetadata>>({});
+  const [libraryModMetadata, setLibraryModMetadata] = useState<Record<string, ModArchiveMetadata>>({});
   const [microsoftAccount, setMicrosoftAccount] = useState<MicrosoftAccount | null>(null);
   const [microsoftBusy, setMicrosoftBusy] = useState(false);
   const [westronAccount, setWestronAccount] = useState<WestronAccount | null>(null);
@@ -93,6 +110,7 @@ export default function App() {
   const [skinAvatarFailed, setSkinAvatarFailed] = useState(false);
   const [performanceThemeEnabled, setPerformanceThemeEnabled] = useState(true);
   const [qualityShaderEnabled, setQualityShaderEnabled] = useState(false);
+  const [customProfileManagerOpen, setCustomProfileManagerOpen] = useState(false);
   const text = (value: string) => translateUi(state?.language ?? 'en', value);
   const installedLabel = text('kurulu');
   const installedLoaderLabel = state?.loaderInstalled && state.loader
@@ -113,6 +131,25 @@ export default function App() {
     document.documentElement.dataset.performanceMode = state?.performanceMode ?? 'default';
     document.documentElement.dataset.performanceTheme = String(performanceThemeEnabled);
   }, [state?.performanceMode, performanceThemeEnabled]);
+
+  useEffect(() => {
+    if (!state || !window.nocturne) return;
+    void window.nocturne.setTitleBarTheme(
+      state.theme,
+      state.performanceMode,
+      performanceThemeEnabled,
+    ).catch(reportError);
+  }, [state?.theme, state?.performanceMode, performanceThemeEnabled]);
+
+  useEffect(() => {
+    const message = error || notice;
+    if (!message) return undefined;
+    const timeout = window.setTimeout(() => {
+      if (error) setError('');
+      else setNotice('');
+    }, message.trim().length > 100 ? 8000 : 5000);
+    return () => window.clearTimeout(timeout);
+  }, [notice, error]);
 
   useEffect(() => {
     setQualityShaderEnabled(state?.performanceShaderEnabled ?? false);
@@ -229,7 +266,8 @@ export default function App() {
   }, []);
 
   function reportError(reason: unknown) {
-    setError(reason instanceof Error ? reason.message : String(reason));
+    const message = reason instanceof Error ? reason.message : String(reason);
+    setError(text(message));
   }
 
   async function perform<T>(label: string, action: () => Promise<T>, success?: (result: T) => string) {
@@ -322,6 +360,42 @@ export default function App() {
     }
   }
 
+  async function requestVersionSelection(type: 'mod' | ContentType, projectId: string, title: string) {
+    setBusy(`versions:${projectId}`);
+    setError('');
+    setNotice('');
+    try {
+      const versions = await window.nocturne.getProjectVersions(type, projectId);
+      if (!versions.length) {
+        throw new Error(`Minecraft ${state?.gameVersion ?? ''} sürümüyle uyumlu yayın bulunamadı.`);
+      }
+      const sortedVersions = [...versions].sort((a, b) =>
+        Date.parse(b.datePublished) - Date.parse(a.datePublished));
+      setVersionPrompt({
+        type,
+        projectId,
+        title,
+        versions: sortedVersions,
+        selectedVersionId: sortedVersions[0].id,
+      });
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function installSelectedVersion() {
+    if (!versionPrompt) return;
+    const { type, projectId, title, selectedVersionId } = versionPrompt;
+    setVersionPrompt(null);
+    if (type === 'mod') {
+      void installMod(projectId, title, selectedVersionId);
+    } else {
+      void installPack(type, projectId, title, selectedVersionId);
+    }
+  }
+
   async function saveGameOptions(gameVersion: string, loader: LauncherState['loader'], confirm = false): Promise<boolean> {
     setBusy('profile-options');
     setError('');
@@ -339,11 +413,7 @@ export default function App() {
       }
       setState(result.state);
       setProfilePrompt(null);
-      setMods([]);
-      setModsTotal(0);
-      setPackProjects([]);
-      setPackProjectsTotal(0);
-      setQuery('');
+      clearProfileSearchResults();
       setNotice(`Minecraft ${gameVersion} ${loader} profili seçildi.`);
       return true;
     } catch (reason) {
@@ -351,6 +421,89 @@ export default function App() {
       return false;
     } finally {
       setBusy('');
+    }
+  }
+
+  function clearProfileSearchResults() {
+    setMods([]);
+    setModsTotal(0);
+    setPackProjects([]);
+    setPackProjectsTotal(0);
+    setQuery('');
+  }
+
+  async function selectCustomProfile(profileId: string): Promise<LauncherState | null> {
+    setBusy('custom-profile-select');
+    setError('');
+    setNotice('');
+    try {
+      const nextState = await window.nocturne.selectCustomProfile(profileId);
+      setState(nextState);
+      clearProfileSearchResults();
+      setNotice(text('Özel profil seçildi.'));
+      return nextState;
+    } catch (reason) {
+      reportError(reason);
+      return null;
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function saveCustomProfile(
+    input: CustomGameProfileInput,
+    profileId?: string,
+  ): Promise<LauncherState | null> {
+    setBusy('custom-profile-save');
+    setError('');
+    setNotice('');
+    try {
+      const nextState = profileId
+        ? await window.nocturne.updateCustomProfile(profileId, input)
+        : await window.nocturne.createCustomProfile(input);
+      setState(nextState);
+      clearProfileSearchResults();
+      setNotice(text(profileId ? 'Özel profil güncellendi.' : 'Özel profil oluşturuldu.'));
+      return nextState;
+    } catch (reason) {
+      reportError(reason);
+      return null;
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function deleteCustomProfile(
+    profileId: string,
+    deleteFiles: boolean,
+  ): Promise<{ state: LauncherState; cleanupError: string | null } | null> {
+    setBusy('custom-profile-delete');
+    setError('');
+    setNotice('');
+    try {
+      const result = await window.nocturne.deleteCustomProfile(profileId, deleteFiles);
+      setState(result.state);
+      clearProfileSearchResults();
+      if (result.cleanupError) {
+        setError(`${text('Profil silindi ancak oyun dosyaları tamamen kaldırılamadı.')} ${result.cleanupError}`);
+      } else {
+        setNotice(text('Özel profil silindi.'));
+      }
+      return result;
+    } catch (reason) {
+      reportError(reason);
+      return null;
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function chooseCustomProfileDirectory(): Promise<string | null> {
+    try {
+      return await window.nocturne.chooseCustomProfileDirectory();
+    } catch (reason) {
+      reportError(reason);
+      return null;
     }
   }
 
@@ -441,26 +594,54 @@ export default function App() {
   }, [page, librarySection, state?.gameVersion]);
 
   useEffect(() => {
-    if (!dependencyPrompt && !removalPrompt && !profilePrompt) return undefined;
+    if (page !== 'library' || !state) return undefined;
+    let active = true;
+    const projectIds = [...new Set([
+      ...state.mods,
+      ...state.resourcePacks,
+      ...state.shaderPacks,
+    ].flatMap((item) => item.projectId ? [item.projectId] : []))];
+    const modFiles = state.mods.map((mod) => mod.name);
+    if (projectIds.length) {
+      void window.nocturne.getProjectMetadata(projectIds).then((metadata) => {
+        if (active) setLibraryProjectMetadata(metadata);
+      }).catch(reportError);
+    } else {
+      setLibraryProjectMetadata({});
+    }
+    if (modFiles.length) {
+      void window.nocturne.getModArchiveMetadata(modFiles).then((metadata) => {
+        if (active) setLibraryModMetadata(metadata);
+      }).catch(reportError);
+    } else {
+      setLibraryModMetadata({});
+    }
+    return () => { active = false; };
+  }, [page, state?.gameDirectory, state?.mods, state?.resourcePacks, state?.shaderPacks]);
+
+  useEffect(() => {
+    if (!dependencyPrompt && !versionPrompt && !removalPrompt && !profilePrompt) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busy) {
         setDependencyPrompt(null);
+        setVersionPrompt(null);
         setRemovalPrompt(null);
         setProfilePrompt(null);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dependencyPrompt, removalPrompt, profilePrompt, busy]);
+  }, [dependencyPrompt, versionPrompt, removalPrompt, profilePrompt, busy]);
 
   async function installMod(
     projectId: string,
     modName: string,
+    selectedVersionId: string,
     confirmedDependencyIds?: string[],
   ) {
     const result = await perform(
       `mod:${projectId}`,
-      () => window.nocturne.installMod(projectId, confirmedDependencyIds),
+      () => window.nocturne.installModVersion(projectId, selectedVersionId, confirmedDependencyIds),
       (installResult) => {
         if (installResult.status === 'confirmation-required') return '';
         if (!installResult.files.length) return `${modName} zaten yüklü.`;
@@ -471,7 +652,7 @@ export default function App() {
     );
     if (!result) return;
     if (result.status === 'confirmation-required') {
-      setDependencyPrompt({ projectId, modName, dependencies: result.dependencies });
+      setDependencyPrompt({ projectId, modName, selectedVersionId, dependencies: result.dependencies });
       return;
     }
     setDependencyPrompt(null);
@@ -500,12 +681,12 @@ export default function App() {
     if (removed) setRemovalPrompt(null);
   }
 
-  async function installPack(type: ContentType, projectId: string, title: string) {
+  async function installPack(type: ContentType, projectId: string, title: string, selectedVersionId: string) {
     setBusy(`content:${type}:${projectId}`);
     setError('');
     setNotice('');
     try {
-      const result = await window.nocturne.installContent(type, projectId);
+      const result = await window.nocturne.installContent(type, projectId, selectedVersionId);
       await refresh();
       setNotice(result.status === 'already-installed'
         ? `${title} (${result.versionNumber}) zaten güncel.`
@@ -616,7 +797,20 @@ export default function App() {
             <option value="fabric">Fabric</option>
             <option value="forge">Forge</option>
           </select>
-          <small>{text('Her sürüm ayrı oyun klasörü kullanır.')}</small>
+          <button
+            className="button button-ghost custom-profile-open"
+            onClick={() => setCustomProfileManagerOpen(true)}
+            disabled={!state || Boolean(busy)}
+          >
+            <Layers3 size={14} />
+            <span>{text('Özel profiller')}</span>
+            <small>{state?.selectedCustomProfileId
+              ? state.customProfiles.find((profile) => profile.id === state.selectedCustomProfileId)?.name
+              : state?.customProfiles.length ? state.customProfiles.length : ''}</small>
+          </button>
+          <small>{state?.selectedCustomProfileId
+            ? text('Özel profil etkin.')
+            : text('Her sürüm ayrı oyun klasörü kullanır.')}</small>
         </section>
 
         <div className="nav-label">{text('MENÜ')}</div>
@@ -634,6 +828,7 @@ export default function App() {
           <NavButton icon={<Cpu />} label={text('Westron Launcher Modu')} active={page === 'performance'} onClick={() => setPage('performance')} />
           <NavButton icon={<Camera />} label={text('Ekran Görüntüleri')} active={page === 'screenshots'} onClick={() => setPage('screenshots')} count={screenshots.length} />
           <NavButton icon={<Shirt />} label={text('Skin & Pelerin')} active={page === 'appearance'} onClick={() => setPage('appearance')} />
+          <NavButton icon={<Users />} label={text('Arkadaşlar')} active={page === 'friends'} onClick={() => setPage('friends')} />
           <NavButton icon={<UserRound />} label={text('Hesap')} active={page === 'account'} onClick={() => setPage('account')} />
         </nav>
 
@@ -649,11 +844,13 @@ export default function App() {
 
       <main className="main-area">
         <header className="topbar">
-          <div className="window-controls">
-            <button type="button" aria-label={text('Pencereyi küçült')} title={text('Pencereyi küçült')} onClick={() => { void window.nocturne.controlWindow('minimize'); }}><Minus size={14} /></button>
-            <button type="button" aria-label={text('Pencereyi büyüt veya geri yükle')} title={text('Pencereyi büyüt veya geri yükle')} onClick={() => { void window.nocturne.controlWindow('maximize'); }}><Square size={13} /></button>
-            <button type="button" className="window-close" aria-label={text('Kapat')} title={text('Kapat')} onClick={() => { void window.nocturne.controlWindow('close'); }}><X size={15} /></button>
-          </div>
+          {window.nocturne.platform !== 'win32' && (
+            <div className="window-controls">
+              <button type="button" aria-label={text('Pencereyi küçült')} title={text('Pencereyi küçült')} onClick={() => { void window.nocturne.controlWindow('minimize'); }}><Minus size={14} /></button>
+              <button type="button" aria-label={text('Pencereyi büyüt veya geri yükle')} title={text('Pencereyi büyüt veya geri yükle')} onClick={() => { void window.nocturne.controlWindow('maximize'); }}><Square size={13} /></button>
+              <button type="button" className="window-close" aria-label={text('Kapat')} title={text('Kapat')} onClick={() => { void window.nocturne.controlWindow('close'); }}><X size={15} /></button>
+            </div>
+          )}
           <div className="breadcrumbs"><span>WESTRON LAUNCHER</span><ChevronDown size={13} /><strong>{pageTitle}</strong></div>
           <div className="topbar-right">
             <span className="top-version"><span className="online-dot" />{state?.menuModInstalled ? text('Westron Launcher hazır') : installedLoaderLabel ?? `${text('Sürüm')} ${state?.gameVersion ?? '…'}`}</span>
@@ -665,8 +862,8 @@ export default function App() {
         </header>
 
         <div className="content">
-          {error && <div className="toast toast-error"><X size={16} />{translateUi(state?.language ?? 'en', error)}<button onClick={() => setError('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
-          {notice && <div className="toast toast-success"><Check size={16} />{translateUi(state?.language ?? 'en', notice)}<button onClick={() => setNotice('')} aria-label={text('Kapat')}><X size={15} /></button></div>}
+          {error && <div className="toast toast-error"><X size={16} />{translateUi(state?.language ?? 'en', error)}</div>}
+          {notice && <div className="toast toast-success"><Check size={16} />{translateUi(state?.language ?? 'en', notice)}</div>}
           {updateStatus && ['checking', 'available', 'downloading', 'downloaded', 'up-to-date', 'error'].includes(updateStatus.status) && (
             <UpdateBanner status={updateStatus} onCheck={() => { void checkForUpdates(); }} onDownload={() => { void downloadUpdate(); }} onRestart={() => {
               void window.nocturne.installUpdate().catch(reportError);
@@ -726,7 +923,7 @@ export default function App() {
               installedProjectIds={state?.modrinthModProjects ?? []}
               onSearch={search}
               onLoadMore={loadMoreMods}
-              onInstall={(id, name) => { void installMod(id, name); }}
+              onInstall={(id, name) => { void requestVersionSelection('mod', id, name); }}
               onRemove={requestModRemoval}
               onOpenFolder={() => perform('folder', () => window.nocturne.openModsFolder())}
               loaderInstalled={Boolean(state?.loaderInstalled)}
@@ -747,7 +944,7 @@ export default function App() {
               installedProjectIds={page === 'resourcepacks' ? state?.resourcePackProjects ?? [] : state?.shaderProjects ?? []}
               onSearch={() => { void searchPacks(page === 'resourcepacks' ? 'resourcepack' : 'shader'); }}
               onLoadMore={() => { void loadMorePacks(page === 'resourcepacks' ? 'resourcepack' : 'shader'); }}
-              onInstall={(id, title) => { void installPack(page === 'resourcepacks' ? 'resourcepack' : 'shader', id, title); }}
+              onInstall={(id, title) => { void requestVersionSelection(page === 'resourcepacks' ? 'resourcepack' : 'shader', id, title); }}
               onRemove={(fileName) => requestPackRemoval(page === 'resourcepacks' ? 'resourcepack' : 'shader', fileName)}
               onOpenFolder={() => perform('folder', () => window.nocturne.openContentFolder(page === 'resourcepacks' ? 'resourcepack' : 'shader'))}
               gameVersion={state?.gameVersion ?? ''}
@@ -755,7 +952,7 @@ export default function App() {
               fabricInstalled={Boolean(state?.fabricInstalled)}
               irisInstalled={Boolean(state?.modrinthModProjects.includes(IRIS_PROJECT_ID))}
               onInstallFabric={() => { void ensureFabricProfile(); }}
-              onInstallIris={() => { void installMod(IRIS_PROJECT_ID, 'Iris shader altyapısı'); }}
+              onInstallIris={() => { void requestVersionSelection('mod', IRIS_PROJECT_ID, 'Iris shader altyapısı'); }}
             />
           )}
           {page === 'performance' && (
@@ -784,9 +981,17 @@ export default function App() {
                 mods={state?.mods ?? []}
                 resourcePacks={state?.resourcePacks ?? []}
                 shaderPacks={state?.shaderPacks ?? []}
+                projectMetadata={libraryProjectMetadata}
+                modMetadata={libraryModMetadata}
+                searchQuery={libraryQueries[librarySection]}
+                onSearchQueryChange={(searchQuery) => setLibraryQueries((queries) => ({
+                  ...queries,
+                  [librarySection]: searchQuery,
+                }))}
                 busy={busy}
                 onRemoveMod={requestModRemoval}
                 onRemovePack={requestPackRemoval}
+                onInstallProject={(type, projectId, title) => { void requestVersionSelection(type, projectId, title); }}
                 onOpenFolder={() => perform('folder', () => librarySection === 'mods'
                   ? window.nocturne.openModsFolder()
                   : window.nocturne.openContentFolder(librarySection === 'resourcepacks' ? 'resourcepack' : 'shader'))}
@@ -830,6 +1035,14 @@ export default function App() {
               />
             </>
           )}
+          <FriendsPage
+            account={westronAccount}
+            gameRunning={Boolean(state?.gameRunning)}
+            language={state?.language ?? 'en'}
+            isActive={page === 'friends'}
+            onOpenAccount={() => setPage('account')}
+            onIncomingCall={() => setPage('friends')}
+          />
           {page === 'settings' && (
             <SettingsPage
               state={state}
@@ -843,6 +1056,7 @@ export default function App() {
               gameBehavior={state?.gameBehavior ?? 'close-on-game-exit'}
               onGameBehaviorChange={(behavior) => { void saveGameBehavior(behavior); }}
               onOpenProfilesFolder={() => perform('folder', () => window.nocturne.openProfilesFolder())}
+              onOpenSelectedProfileFolder={() => perform('folder', () => window.nocturne.openSelectedProfileFolder())}
               publisherAccount={westronAccount}
               publisherBusy={publisherBusy}
               onPublishUpdate={() => { void publishUpdate(); }}
@@ -850,6 +1064,19 @@ export default function App() {
           )}
         </div>
       </main>
+      {versionPrompt && (
+        <VersionSelectionModal
+          type={versionPrompt.type}
+          title={versionPrompt.title}
+          versions={versionPrompt.versions}
+          selectedVersionId={versionPrompt.selectedVersionId}
+          busy={Boolean(busy)}
+          onSelectionChange={(selectedVersionId) => setVersionPrompt((current) =>
+            current ? { ...current, selectedVersionId } : current)}
+          onCancel={() => setVersionPrompt(null)}
+          onConfirm={installSelectedVersion}
+        />
+      )}
       {dependencyPrompt && (
         <DependencyConfirmationModal
           modName={dependencyPrompt.modName}
@@ -860,6 +1087,7 @@ export default function App() {
             void installMod(
               dependencyPrompt.projectId,
               dependencyPrompt.modName,
+              dependencyPrompt.selectedVersionId,
               dependencyPrompt.dependencies.map((dependency) => dependency.projectId),
             );
           }}
@@ -886,6 +1114,19 @@ export default function App() {
           onConfirm={() => { void saveGameOptions(profilePrompt.gameVersion, profilePrompt.loader, true); }}
           busy={busy === 'profile-options'}
           language={state?.language ?? 'en'}
+        />
+      )}
+      {customProfileManagerOpen && state && (
+        <CustomProfileManagerModal
+          state={state}
+          gameVersions={gameVersions}
+          busy={busy.startsWith('custom-profile-')}
+          language={state.language}
+          onClose={() => setCustomProfileManagerOpen(false)}
+          onSelect={selectCustomProfile}
+          onSave={saveCustomProfile}
+          onDelete={deleteCustomProfile}
+          onChooseDirectory={chooseCustomProfileDirectory}
         />
       )}
       {languageSetupRequired && (
@@ -1023,6 +1264,64 @@ function DependencyConfirmationModal({ modName, dependencies, busy, onCancel, on
   );
 }
 
+function VersionSelectionModal({
+  type,
+  title,
+  versions,
+  selectedVersionId,
+  busy,
+  onSelectionChange,
+  onCancel,
+  onConfirm,
+}: {
+  type: 'mod' | ContentType;
+  title: string;
+  versions: ModrinthVersionOption[];
+  selectedVersionId: string;
+  busy: boolean;
+  onSelectionChange: (versionId: string) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const t = useUiText();
+  const label = type === 'mod' ? t('Mod') : type === 'resourcepack' ? t('Kaynak paketleri') : t('Shader paketleri');
+  return (
+    <div className="dependency-modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busy) onCancel();
+    }}>
+      <section className="dependency-modal" role="dialog" aria-modal="true" aria-labelledby="version-modal-title">
+        <div className="dependency-modal-icon"><Package size={21} /></div>
+        <button className="dependency-modal-close" onClick={onCancel} disabled={busy} aria-label={t('Pencereyi kapat')}>
+          <X size={17} />
+        </button>
+        <div className="eyebrow">{label}</div>
+        <h2 id="version-modal-title">{title}</h2>
+        <label className="project-version-select">
+          <span>{t('Sürüm seç')}</span>
+          <select value={selectedVersionId} onChange={(event) => onSelectionChange(event.currentTarget.value)} disabled={busy}>
+            {versions.map((version) => (
+              <option value={version.id} key={version.id}>
+                {version.versionNumber}{version.name && version.name !== version.versionNumber ? ` · ${version.name}` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="project-version-meta">
+          <span>{versions.find((version) => version.id === selectedVersionId)?.gameVersions.join(', ')}</span>
+          <span>{versions.find((version) => version.id === selectedVersionId)?.loaders.join(', ')}</span>
+        </div>
+        <div className="dependency-modal-actions">
+          <button className="button button-ghost" onClick={onCancel} disabled={busy}>{t('Vazgeç')}</button>
+          <button className="button button-primary" onClick={onConfirm} disabled={busy || !selectedVersionId}>
+            {busy ? <LoaderCircle className="spin" size={16} /> : <ArrowDownToLine size={16} />}
+            {t('Seçili sürümü yükle')}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function RemoveConfirmationModal({ fileName, size, contentType, busy, onCancel, onConfirm }: {
   fileName: string;
   size: number;
@@ -1052,7 +1351,7 @@ function RemoveConfirmationModal({ fileName, size, contentType, busy, onCancel, 
           <button className="button button-ghost" onClick={onCancel} disabled={busy}>{t('Vazgeç')}</button>
           <button className="button button-danger" onClick={onConfirm} disabled={busy}>
             {busy ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
-            {t('Evet, modu kaldır')}
+            {t('Evet, kaldır')}
           </button>
         </div>
       </section>
@@ -1136,6 +1435,330 @@ function NewProfileConfirmationModal({ gameVersion, loader, profileDirectory, do
   );
 }
 
+function CustomProfileManagerModal({ state, gameVersions, busy, language, onClose, onSelect, onSave, onDelete, onChooseDirectory }: {
+  state: LauncherState;
+  gameVersions: MinecraftVersionOption[];
+  busy: boolean;
+  language: LauncherState['language'];
+  onClose: () => void;
+  onSelect: (profileId: string) => Promise<LauncherState | null>;
+  onSave: (input: CustomGameProfileInput, profileId?: string) => Promise<LauncherState | null>;
+  onDelete: (profileId: string, deleteFiles: boolean) => Promise<{ state: LauncherState; cleanupError: string | null } | null>;
+  onChooseDirectory: () => Promise<string | null>;
+}) {
+  const t = (value: string) => translateUi(language, value);
+  const [selectedId, setSelectedId] = useState(
+    state.selectedCustomProfileId ?? state.customProfiles[0]?.id ?? '',
+  );
+  const [formMode, setFormMode] = useState<'create' | 'edit' | null>(null);
+  const [formError, setFormError] = useState('');
+  const [deletePrompt, setDeletePrompt] = useState(false);
+  const [deleteFiles, setDeleteFiles] = useState(false);
+  const [draft, setDraft] = useState<CustomGameProfileInput>({
+    name: '',
+    gameVersion: state.gameVersion,
+    loader: state.loader,
+    memoryMb: Math.min(4096, state.maxCustomMemoryMb),
+    directory: '',
+  });
+  const selectedProfile = state.customProfiles.find((profile) => profile.id === selectedId) ?? null;
+  const memoryLimitMb = Math.max(state.maxCustomMemoryMb, formMode === 'edit' ? selectedProfile?.memoryMb ?? 0 : 0);
+
+  useEffect(() => {
+    setSelectedId(state.selectedCustomProfileId ?? state.customProfiles[0]?.id ?? '');
+  }, [state.selectedCustomProfileId, state.customProfiles]);
+
+  function startCreate() {
+    setFormMode('create');
+    setDeletePrompt(false);
+    setFormError('');
+    setDraft({
+      name: '',
+      gameVersion: state.gameVersion,
+      loader: state.loader,
+      memoryMb: Math.max(1024, Math.min(4096, state.maxCustomMemoryMb)),
+      directory: '',
+    });
+  }
+
+  function startEdit() {
+    if (!selectedProfile) return;
+    setFormMode('edit');
+    setDeletePrompt(false);
+    setFormError('');
+    setDraft({
+      name: selectedProfile.name,
+      gameVersion: selectedProfile.gameVersion,
+      loader: selectedProfile.loader,
+      memoryMb: selectedProfile.memoryMb,
+      directory: selectedProfile.directory,
+    });
+  }
+
+  async function submitProfile() {
+    if (!draft.name.trim() || draft.name.trim().length > 40) {
+      setFormError(t('Profil adı 1-40 karakter arasında olmalı.'));
+      return;
+    }
+    if (!Number.isSafeInteger(draft.memoryMb)
+      || draft.memoryMb < 1024
+      || draft.memoryMb > memoryLimitMb) {
+      setFormError(t('RAM değeri kullanılabilir aralığın dışında.'));
+      return;
+    }
+    const savedState = await onSave({
+      ...draft,
+      directory: formMode === 'create' ? (draft.directory?.trim() || undefined) : selectedProfile?.directory,
+    }, formMode === 'edit' ? selectedProfile?.id : undefined);
+    if (!savedState) return;
+    if (formMode === 'create') {
+      setSelectedId(savedState.selectedCustomProfileId ?? '');
+    }
+    setFormMode(null);
+    setFormError('');
+  }
+
+  async function useSelectedProfile() {
+    if (!selectedId) return;
+    const nextState = await onSelect(selectedId);
+    if (nextState) onClose();
+  }
+
+  async function confirmDeleteProfile() {
+    if (!selectedProfile) return;
+    const result = await onDelete(selectedProfile.id, deleteFiles);
+    if (!result) return;
+    setSelectedId(
+      result.state.selectedCustomProfileId ?? result.state.customProfiles[0]?.id ?? '',
+    );
+    setDeletePrompt(false);
+    setDeleteFiles(false);
+    setFormMode(null);
+  }
+
+  async function chooseDirectory() {
+    const directory = await onChooseDirectory();
+    if (directory) {
+      setDraft((current) => ({ ...current, directory }));
+      setFormError('');
+    }
+  }
+
+  return (
+    <div className="dependency-modal-backdrop" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busy) onClose();
+    }}>
+      <section className="dependency-modal custom-profile-modal" role="dialog" aria-modal="true" aria-labelledby="custom-profile-title">
+        <button className="dependency-modal-close" onClick={onClose} disabled={busy} aria-label={t('Pencereyi kapat')}>
+          <X size={17} />
+        </button>
+        {formMode === null && (
+          <>
+            <div className="dependency-modal-icon"><Layers3 size={21} /></div>
+            <div className="eyebrow">{t('OYUN PROFİLLERİ')}</div>
+          </>
+        )}
+        <h2 id="custom-profile-title">
+          {formMode === 'edit' ? t('Özel profili düzenle') : formMode === 'create' ? t('Yeni özel profil') : t('Özel profiller')}
+        </h2>
+        {formMode === null && (
+          <>
+            <p>{t('Sürüm, yükleyici, RAM ve oyun klasörü ayarlarını profillere göre sakla.')}</p>
+            <label className="custom-profile-field">
+              <span>{t('Profil seç')}</span>
+              <select
+                value={selectedId}
+                disabled={busy || deletePrompt}
+                onChange={(event) => setSelectedId(event.currentTarget.value)}
+              >
+                {state.customProfiles.length === 0
+                  ? <option value="" disabled>{t('Profil bulunmuyor')}</option>
+                  : state.customProfiles.map((profile) => (
+                    <option key={profile.id} value={profile.id}>{profile.name} — {profile.gameVersion} {profile.loader}</option>
+                  ))}
+              </select>
+            </label>
+            {selectedProfile && (
+              <div className="custom-profile-summary">
+                <span>{selectedProfile.memoryMb / 1024} {t('GB')} · {selectedProfile.loader}</span>
+                <code>{selectedProfile.directory}</code>
+              </div>
+            )}
+          </>
+        )}
+
+        {deletePrompt ? (
+          <div className="custom-profile-delete-confirm" role="alertdialog" aria-labelledby="custom-profile-delete-title">
+            <h3 id="custom-profile-delete-title">{t('Özel profili silmek istediğinizden emin misiniz?')}</h3>
+            <p>{t('Seçilen profil klasöründeki her şey silinir; modlar, dünyalar ve ayarlar da buna dahildir.')}</p>
+            <label className="custom-profile-delete-option">
+              <input
+                type="radio"
+                name="custom-profile-delete-files"
+                checked={!deleteFiles}
+                onChange={() => setDeleteFiles(false)}
+                disabled={busy}
+              />
+              <span>
+                <strong>{t('Yalnızca profili sil')}</strong>
+                <small>{t('Oyun dosyaları klasörde kalır.')}</small>
+              </span>
+            </label>
+            <label className="custom-profile-delete-option">
+              <input
+                type="radio"
+                name="custom-profile-delete-files"
+                checked={deleteFiles}
+                onChange={() => setDeleteFiles(true)}
+                disabled={busy || state.gameRunning}
+              />
+              <span>
+                <strong>{t('Profil dosyalarını da sil')}</strong>
+                <small>{t('Profil klasörünü ve içindeki tüm dosyaları kalıcı olarak sil.')}</small>
+              </span>
+            </label>
+            {state.gameRunning && <p className="custom-profile-delete-warning">{t('Oyun çalışırken profil dosyaları silinemez.')}</p>}
+            <div className="dependency-modal-actions">
+              <button
+                className="button button-ghost"
+                onClick={() => { setDeletePrompt(false); setDeleteFiles(false); }}
+                disabled={busy}
+              >
+                {t('Vazgeç')}
+              </button>
+              <button
+                className="button button-danger"
+                onClick={() => { void confirmDeleteProfile(); }}
+                disabled={busy || (deleteFiles && state.gameRunning)}
+              >
+                {busy ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+                {t(deleteFiles ? 'Profil ve dosyaları sil' : 'Profili sil')}
+              </button>
+            </div>
+          </div>
+        ) : !formMode ? (
+          <div className="custom-profile-actions">
+            <button className="button button-secondary" onClick={() => { void useSelectedProfile(); }} disabled={busy || !selectedId}>
+              {busy ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+              {t('Bu profili kullan')}
+            </button>
+            <button className="button button-primary" onClick={startCreate} disabled={busy}>
+              <Plus size={15} />{t('Özel profil oluştur')}
+            </button>
+            {selectedProfile && (
+              <>
+                <button className="button button-ghost" onClick={startEdit} disabled={busy}>
+                  <Settings2 size={15} />{t('Profili düzenle')}
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="custom-profile-form">
+            <label className="custom-profile-field">
+              <span>{t('Profil adı')}</span>
+              <input
+                type="text"
+                maxLength={40}
+                value={draft.name}
+                onChange={(event) => {
+                  const name = event.currentTarget.value;
+                  setDraft((current) => ({ ...current, name }));
+                  setFormError('');
+                }}
+                placeholder={t('Profil adını yaz')}
+                disabled={busy}
+              />
+            </label>
+            <div className="custom-profile-form-grid">
+              <label className="custom-profile-field">
+                <span>{t('OYUN SÜRÜMÜ')}</span>
+                <select
+                  value={draft.gameVersion}
+                  onChange={(event) => {
+                    const gameVersion = event.currentTarget.value;
+                    setDraft((current) => ({ ...current, gameVersion }));
+                  }}
+                  disabled={busy}
+                >
+                  {!gameVersions.some((version) => version.id === draft.gameVersion) && (
+                    <option value={draft.gameVersion}>{draft.gameVersion}</option>
+                  )}
+                  {gameVersions.map((version) => <option key={version.id} value={version.id}>{version.id}</option>)}
+                </select>
+              </label>
+              <label className="custom-profile-field">
+                <span>{t('YÜKLEYİCİ')}</span>
+                <select
+                  value={draft.loader}
+                  onChange={(event) => {
+                    const loader = event.currentTarget.value;
+                    if (loader === 'vanilla' || loader === 'fabric' || loader === 'forge') {
+                      setDraft((current) => ({ ...current, loader }));
+                    }
+                  }}
+                  disabled={busy}
+                >
+                  <option value="vanilla">Vanilla</option>
+                  <option value="fabric">Fabric</option>
+                  <option value="forge">Forge</option>
+                </select>
+              </label>
+            </div>
+            <label className="custom-profile-field">
+              <span>{t('Ayrılacak RAM')} · {t('GB')}</span>
+              <input
+                type="number"
+                min={1}
+                max={memoryLimitMb / 1024}
+                step={0.5}
+                value={draft.memoryMb / 1024}
+                onChange={(event) => {
+                  const memoryGb = Number(event.currentTarget.value);
+                  setDraft((current) => ({ ...current, memoryMb: Number.isFinite(memoryGb) ? Math.round(memoryGb * 1024) : 0 }));
+                  setFormError('');
+                }}
+                disabled={busy}
+              />
+            </label>
+            <div className="custom-profile-field">
+              <span>{t('Profil klasörü')}</span>
+              {formMode === 'create' ? (
+                <div className="custom-profile-directory-picker">
+                  <code>{draft.directory || t('Varsayılan özel profil klasörü kullanılacak.')}</code>
+                  <button className="button button-ghost" onClick={() => { void chooseDirectory(); }} disabled={busy}>
+                    <FolderOpen size={15} />{t('Klasör seç')}
+                  </button>
+                </div>
+              ) : (
+                <code className="custom-profile-path">{draft.directory}</code>
+              )}
+            </div>
+            {formError && <p className="custom-profile-error" role="alert">{formError}</p>}
+            <div className="dependency-modal-actions">
+              <button className="button button-ghost" onClick={() => { setFormMode(null); setFormError(''); }} disabled={busy}>
+                {t('Vazgeç')}
+              </button>
+              <button className="button button-primary" onClick={() => { void submitProfile(); }} disabled={busy}>
+                {busy ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}
+                {t('Kaydet')}
+              </button>
+            </div>
+            {formMode === 'edit' && (
+              <button
+                className="button button-danger custom-profile-delete-submit"
+                onClick={() => { setDeleteFiles(false); setDeletePrompt(true); }}
+                disabled={busy}
+              >
+                <Trash2 size={15} />{t('Profili sil')}
+              </button>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
 function NavButton({ icon, label, active, onClick, badge, count }: {
   icon: React.ReactNode; label: string; active: boolean; onClick: () => void; badge?: string; count?: number;
 }) {
@@ -1187,6 +1810,13 @@ function PerformanceModesPage({
   const shaderSupported = loader === 'fabric';
   const cards = [
     {
+      mode: 'default' as const,
+      title: 'Varsayılan Westron Launcher',
+      description: 'Westron Launcher modlarının etkisini kaldır; kişisel yüklemelerin korunur.',
+      icon: <RotateCcw size={19} />,
+      style: '',
+    },
+    {
       mode: 'performance' as const,
       title: 'Ultra Performans',
       description: 'FPS değerini artırmaya odaklı, seçili sürümle uyumlu modları kur.',
@@ -1199,13 +1829,6 @@ function PerformanceModesPage({
       description: 'Distant Horizons ve görsel iyileştirmelerle oyun görüntüsünü geliştir.',
       icon: <Sun size={19} />,
       style: 'mode-quality',
-    },
-    {
-      mode: 'default' as const,
-      title: 'Varsayılan Westron Launcher',
-      description: 'Westron Launcher modlarının etkisini kaldır; kişisel yüklemelerin korunur.',
-      icon: <RotateCcw size={19} />,
-      style: '',
     },
   ];
 
@@ -1548,7 +2171,7 @@ function ModrinthPackPage({ type, projects, totalHits, query, setQuery, busy, in
         {projects.map((project) => {
           const installed = installedProjectIds.includes(project.id) || installedFiles.some((item) =>
             item.name.toLowerCase().includes(project.slug.toLowerCase()));
-          const isInstalling = busy === `content:${type}:${project.id}`;
+          const isInstalling = busy === `content:${type}:${project.id}` || busy === `versions:${project.id}`;
           return (
             <article className="mod-card" key={project.id}>
               <div className="mod-card-head">
@@ -1656,18 +2279,28 @@ function InstalledLibrarySection({
   mods,
   resourcePacks,
   shaderPacks,
+  projectMetadata,
+  modMetadata,
+  searchQuery,
+  onSearchQueryChange,
   busy,
   onRemoveMod,
   onRemovePack,
+  onInstallProject,
   onOpenFolder,
 }: {
   section: LibrarySection;
   mods: LauncherState['mods'];
   resourcePacks: LauncherState['resourcePacks'];
   shaderPacks: LauncherState['shaderPacks'];
+  projectMetadata: Record<string, ModrinthProjectMetadata>;
+  modMetadata: Record<string, ModArchiveMetadata>;
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
   busy: string;
   onRemoveMod: (fileName: string) => void;
   onRemovePack: (type: ContentType, fileName: string) => void;
+  onInstallProject: (type: 'mod' | ContentType, projectId: string, title: string) => void;
   onOpenFolder: () => void;
 }) {
   const t = useUiText();
@@ -1675,6 +2308,17 @@ function InstalledLibrarySection({
   const isResources = section === 'resourcepacks';
   const items = isMods ? mods : isResources ? resourcePacks : shaderPacks;
   const title = isMods ? t('Yüklü modlar') : isResources ? t('Yüklü kaynak paketleri') : t('Yüklü shader paketleri');
+  const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  const filteredItems = normalizedQuery
+    ? items.filter((item) => {
+      const itemTitle = item.projectId
+        ? projectMetadata[item.projectId]?.title || item.name.replace(/\.(jar|zip)$/i, '')
+        : item.name.replace(/\.(jar|zip)$/i, '');
+      const description = (isMods ? modMetadata[item.name]?.description : undefined)
+        || (item.projectId ? projectMetadata[item.projectId]?.description : '');
+      return `${itemTitle} ${item.name} ${description}`.toLocaleLowerCase().includes(normalizedQuery);
+    })
+    : items;
 
   return (
     <section className="installed-library-panel">
@@ -1688,28 +2332,77 @@ function InstalledLibrarySection({
           <FolderOpen size={15} />{t('Klasörü aç')}
         </button>
       </div>
-      {items.length > 0 ? (
-        <div className="mod-list">
-          {items.map((item) => (
-            <div className="mod-list-item" key={item.name}>
-              <div className="list-mod-icon">{isMods ? <Package size={16} /> : isResources ? <Image size={16} /> : <Sun size={16} />}</div>
-              <div className="list-mod-name"><strong>{item.name}</strong><span>{formatBytes(item.size)}</span></div>
-              <span className="list-mod-type">{isMods ? t('JAR MOD') : t('ZIP PAKET')}</span>
-              <button
-                type="button"
-                className="remove-mod"
-                aria-label={`${item.name} ${t('dosyasını kaldır')}`}
-                title={t('Sil')}
-                disabled={Boolean(busy)}
-                onClick={() => {
-                  if (section === 'mods') onRemoveMod(item.name);
-                  else onRemovePack(section === 'resourcepacks' ? 'resourcepack' : 'shader', item.name);
-                }}
-              >
-                {busy === `remove:${item.name}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
-              </button>
-            </div>
+      <label className="library-search">
+        <Search size={15} aria-hidden="true" />
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(event) => onSearchQueryChange(event.target.value)}
+          placeholder={t('Kütüphanede ara')}
+          aria-label={t('Kütüphanede ara')}
+        />
+      </label>
+      {filteredItems.length > 0 ? (
+        <div className="mod-list library-grid">
+          {filteredItems.map((item) => (
+            <article className="mod-list-item library-card" key={item.name}>
+              <div className="library-card-heading">
+                <div className="list-mod-icon">
+                  {(isMods ? modMetadata[item.name]?.iconUrl : undefined) || (item.projectId ? projectMetadata[item.projectId]?.iconUrl : '')
+                    ? <img src={(isMods ? modMetadata[item.name]?.iconUrl : undefined) || (item.projectId ? projectMetadata[item.projectId]?.iconUrl : '')} alt="" />
+                    : isMods ? <Package size={16} /> : isResources ? <Image size={16} /> : <Sun size={16} />}
+                </div>
+                <div className="list-mod-name">
+                  <strong>{item.projectId ? projectMetadata[item.projectId]?.title || item.name.replace(/\.(jar|zip)$/i, '') : item.name.replace(/\.(jar|zip)$/i, '')}</strong>
+                  <span>{formatBytes(item.size)} · {isMods ? t('JAR MOD') : t('ZIP PAKET')}</span>
+                </div>
+                <span className={`list-mod-source ${item.projectId ? 'managed' : ''}`}>{item.projectId ? 'MODRINTH' : t('Yerel dosya')}</span>
+              </div>
+              <p className="library-card-description">
+                {(isMods ? modMetadata[item.name]?.description : undefined)
+                  || (item.projectId ? projectMetadata[item.projectId]?.description : '')
+                  || t('Bu dosya seçili oyun profiline yüklenmiş.')}
+              </p>
+              <div className="library-card-details"><span>{item.name}</span></div>
+              <div className="library-item-actions">
+                <button
+                  type="button"
+                  className="button button-secondary library-reinstall-button"
+                  aria-label={`${item.name} ${t('Yeniden yükle')}`}
+                  title={item.projectId ? t('Yeniden yükle') : t('Modrinth üzerinden yüklenen içerik yeniden yüklenebilir.')}
+                  disabled={Boolean(busy) || !item.projectId}
+                  onClick={() => {
+                    if (!item.projectId) return;
+                    const contentType = isMods ? 'mod' : section === 'resourcepacks' ? 'resourcepack' : 'shader';
+                    const title = projectMetadata[item.projectId]?.title || item.name.replace(/\.(jar|zip)$/i, '');
+                    onInstallProject(contentType, item.projectId, title);
+                  }}
+                >
+                  {busy === `versions:${item.projectId}` ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}
+                  {t('Yeniden yükle')}
+                </button>
+                <button
+                  type="button"
+                  className="button library-remove-button"
+                  aria-label={`${item.name} ${t('dosyasını kaldır')}`}
+                  title={t('Sil')}
+                  disabled={Boolean(busy)}
+                  onClick={() => {
+                    if (section === 'mods') onRemoveMod(item.name);
+                    else onRemovePack(section === 'resourcepacks' ? 'resourcepack' : 'shader', item.name);
+                  }}
+                >
+                  {busy === `remove:${item.name}` ? <LoaderCircle className="spin" size={13} /> : <Trash2 size={13} />}
+                  {t('Sil')}
+                </button>
+              </div>
+            </article>
           ))}
+        </div>
+      ) : items.length > 0 ? (
+        <div className="empty-state installed-library-empty">
+          <div className="empty-icon"><Search size={19} /></div>
+          <strong>{t('Aramanızla eşleşen içerik bulunamadı.')}</strong>
         </div>
       ) : (
         <div className="empty-state installed-library-empty">
@@ -1860,7 +2553,7 @@ function ModList({ mods, busy, onRemove }: { mods: LauncherState['mods']; busy: 
 function SettingsPage({
   state, language, onLanguageChange, theme, onThemeChange, busy, updateStatus, onCheckUpdates,
   gameBehavior, onGameBehaviorChange,
-  onOpenProfilesFolder, publisherAccount, publisherBusy, onPublishUpdate,
+  onOpenProfilesFolder, onOpenSelectedProfileFolder, publisherAccount, publisherBusy, onPublishUpdate,
 }: {
   state: LauncherState | null;
   language: AppLanguage;
@@ -1873,6 +2566,7 @@ function SettingsPage({
   gameBehavior: GameBehavior;
   onGameBehaviorChange: (behavior: GameBehavior) => void;
   onOpenProfilesFolder: () => void;
+  onOpenSelectedProfileFolder: () => void;
   publisherAccount: WestronAccount | null;
   publisherBusy: boolean;
   onPublishUpdate: () => void;
@@ -1910,7 +2604,15 @@ function SettingsPage({
       <section className="settings-panel">
         <div className="settings-heading"><div className="card-icon violet"><Settings2 size={18} /></div><div><h3>{t('gameInstallation')}</h3><span>{t('gameInstallationDescription')}</span></div></div>
         <div className="setting-row"><div><strong>{t('minecraftFolder')}</strong><span>{t('profileModsLocation')}</span><code title={state?.minecraftDir}>{state?.minecraftDir ?? t('loading')}</code></div><button className="button button-secondary button-small" onClick={onOpenProfilesFolder} disabled={Boolean(busy)}><FolderOpen size={15} />{t('Westron Profiles klasörünü aç')}</button></div>
-        <div className="setting-row"><div><strong>{t('selectedProfile')}</strong><span>{state?.gameDirectory}</span></div><span className="setting-value">{state?.gameVersion ?? '…'} · {state?.loader ?? '…'}</span></div>
+        <div className="setting-row">
+          <div><strong>{t('selectedProfile')}</strong><span>{state?.gameDirectory}</span></div>
+          <div className="library-heading-actions">
+            <span className="setting-value">{state?.gameVersion ?? '…'} · {state?.loader ?? '…'}</span>
+            <button className="button button-secondary button-small" onClick={onOpenSelectedProfileFolder} disabled={Boolean(busy)}>
+              <FolderOpen size={15} />{t('Seçili profili aç')}
+            </button>
+          </div>
+        </div>
       </section>
       <section className="settings-panel">
         <div className="settings-heading"><div className="card-icon violet"><Play size={18} /></div><div><h3>{t('Westron Launcher davranışı')}</h3><span>{t('Minecraft çalışırken ve kapandıktan sonra launcher davranışını seç.')}</span></div></div>
