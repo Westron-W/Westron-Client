@@ -1,6 +1,8 @@
 const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu, nativeImage, net, session, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const packageJson = require('../package.json');
+// electron-builder omits its build configuration from the packaged package.json.
+const WINDOWS_APP_USER_MODEL_ID = 'com.westron.launcher';
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -15,7 +17,7 @@ if (launcherIconPath && launcherIcon.isEmpty()) {
   throw new Error(`Could not load Westron Launcher icon: ${launcherIconPath}`);
 }
 app.setName('Westron Launcher');
-if (process.platform === 'win32') app.setAppUserModelId(packageJson.build.appId);
+if (process.platform === 'win32') app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
 app.setPath('cache', path.join(app.getPath('userData'), 'renderer-cache-v2'));
 const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');

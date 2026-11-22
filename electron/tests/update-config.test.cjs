@@ -25,7 +25,9 @@ test('Windows launcher windows and taskbar use the packaged Westron Launcher ico
   const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
   assert.equal(packageJson.build.appId, 'com.westron.launcher');
   assert.equal(packageJson.build.win.icon, 'build/westron-launcher.ico');
-  assert.match(mainCode, /app\.setAppUserModelId\(packageJson\.build\.appId\)/);
+  assert.match(mainCode, /const WINDOWS_APP_USER_MODEL_ID = 'com\.westron\.launcher'/);
+  assert.match(mainCode, /app\.setAppUserModelId\(WINDOWS_APP_USER_MODEL_ID\)/);
+  assert.doesNotMatch(mainCode, /app\.setAppUserModelId\(packageJson\.build\.appId\)/);
   assert.match(mainCode, /nativeImage\.createFromPath\(launcherIconPath\)/);
   assert.match(mainCode, /if \(launcherIcon\) window\.setIcon\(launcherIcon\)/);
   assert.match(mainCode, /icon: launcherIcon/);
