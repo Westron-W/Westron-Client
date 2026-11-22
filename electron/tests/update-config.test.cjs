@@ -21,6 +21,17 @@ test('package and lockfile versions are aligned for release metadata', () => {
   assert.match(mainCode, /const minecraftDir = process\.platform === 'win32'/);
 });
 
+test('Windows launcher windows and taskbar use the packaged Westron Launcher icon', () => {
+  const mainCode = fs.readFileSync('electron/main.cjs', 'utf8');
+  assert.equal(packageJson.build.appId, 'com.westron.launcher');
+  assert.equal(packageJson.build.win.icon, 'build/westron-launcher.ico');
+  assert.match(mainCode, /app\.setAppUserModelId\(packageJson\.build\.appId\)/);
+  assert.match(mainCode, /nativeImage\.createFromPath\(launcherIconPath\)/);
+  assert.match(mainCode, /if \(launcherIcon\) window\.setIcon\(launcherIcon\)/);
+  assert.match(mainCode, /icon: launcherIcon/);
+  assert.equal(fs.existsSync('build/westron-launcher.ico'), true);
+});
+
 test('Windows updater uses a hidden generic feed and releases show only installers', () => {
   assert.equal(packageJson.build.nsis.include, 'build/installer.nsh');
   assert.ok(packageJson.build.win.target.some

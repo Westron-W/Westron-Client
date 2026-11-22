@@ -5,8 +5,17 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
+const launcherIconPath = process.platform === 'win32'
+  ? (app.isPackaged
+    ? path.join(process.resourcesPath, 'westron-launcher.ico')
+    : path.join(__dirname, '..', 'build', 'westron-launcher.ico'))
+  : undefined;
+const launcherIcon = launcherIconPath ? nativeImage.createFromPath(launcherIconPath) : undefined;
+if (launcherIconPath && launcherIcon.isEmpty()) {
+  throw new Error(`Could not load Westron Launcher icon: ${launcherIconPath}`);
+}
 app.setName('Westron Launcher');
-if (process.platform === 'win32') app.setAppUserModelId('com.westron.launcher');
+if (process.platform === 'win32') app.setAppUserModelId(packageJson.build.appId);
 app.setPath('cache', path.join(app.getPath('userData'), 'renderer-cache-v2'));
 const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
@@ -1889,11 +1898,7 @@ function updateVoiceCallWindowState(input, participants) {
       alwaysOnTop: true,
       backgroundColor: '#0b0d11',
       title: 'Westron Voice Call',
-      icon: process.platform === 'win32'
-        ? (app.isPackaged
-          ? path.join(process.resourcesPath, 'westron-launcher.ico')
-          : path.join(__dirname, '..', 'build', 'westron-launcher.ico'))
-        : undefined,
+      icon: launcherIcon,
       autoHideMenuBar: true,
       webPreferences: {
         preload: path.join(__dirname, 'voice-call-preload.cjs'),
@@ -1903,6 +1908,7 @@ function updateVoiceCallWindowState(input, participants) {
       },
     });
     const window = voiceCallWindow;
+    if (launcherIcon) window.setIcon(launcherIcon);
     window.webContents.on('preload-error', (_event, preloadPath, error) => {
       console.error(`Voice call preload failed (${path.basename(preloadPath)}): ${error.message}`);
     });
@@ -1959,11 +1965,7 @@ function createWindow() {
     frame: false,
     backgroundColor: '#0b0d11',
     title: 'Westron Launcher',
-    icon: process.platform === 'win32'
-      ? (app.isPackaged
-        ? path.join(process.resourcesPath, 'westron-launcher.ico')
-        : path.join(__dirname, '..', 'build', 'westron-launcher.ico'))
-      : undefined,
+    icon: launcherIcon,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -1973,6 +1975,7 @@ function createWindow() {
     },
   });
   const window = mainWindow;
+  if (launcherIcon) window.setIcon(launcherIcon);
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Electron preload failed (${path.basename(preloadPath)}): ${error.message}`);
   });
