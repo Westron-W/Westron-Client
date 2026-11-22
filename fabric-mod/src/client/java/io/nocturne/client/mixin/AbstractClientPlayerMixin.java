@@ -12,6 +12,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.UUID;
+
 @Mixin(value = AbstractClientPlayer.class, remap = false)
 public abstract class AbstractClientPlayerMixin {
     @Inject(method = "getSkin", at = @At("HEAD"), cancellable = true, remap = false)
@@ -30,7 +32,9 @@ public abstract class AbstractClientPlayerMixin {
 
         var connection = Minecraft.getInstance().getConnection();
         if (connection == null) return false;
-        PlayerInfo playerInfo = connection.getPlayerInfo(profile.id());
+        UUID profileId = profile.id();
+        if (profileId == null) return false;
+        PlayerInfo playerInfo = connection.getPlayerInfo(profileId);
         if (playerInfo == null) return false;
 
         var serverTextures = playerInfo.getProfile().properties().get("textures");

@@ -1,10 +1,11 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
 import { isAppLanguage, SUPPORTED_LANGUAGES, translate, translateUi, type AppLanguage } from './i18n';
-import FriendsPage from './FriendsPage';
+import FriendsPage, { FriendSkinFace, type FriendsNotification } from './FriendsPage';
+import launcherIcon from '../build/app-icon.svg';
 import {
-  ArrowDownToLine, ArrowRight, Box, Camera, Check, ChevronDown, CircleHelp, Compass, Image,
+  ArrowDownToLine, ArrowRight, Box, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Compass, Download, Image, Share2,
   Cpu, FolderOpen, HardDrive, Layers3, LoaderCircle, Minus,
-  Languages, LogOut, Package, Pause, Play, Plus, RefreshCw, RotateCcw, Search, Square,
+  Languages, LogOut, Mic, Package, Pause, Phone, PhoneOff, Play, Plus, RefreshCw, RotateCcw, Search, Square,
   Settings2, ShieldCheck, Shirt, Sparkles, Sun, Trash2, Upload, UserRound, Users, X,
 } from 'lucide-react';
 
@@ -67,6 +68,8 @@ export default function App() {
   const [busy, setBusy] = useState('');
   const [installProgress, setInstallProgress] = useState<InstallProgress | null>(null);
   const [notice, setNotice] = useState('');
+  const [friendNotifications, setFriendNotifications] = useState<FriendsNotification[]>([]);
+  const friendNotificationTimersRef = useRef(new Map<string, number>());
   const [error, setError] = useState('');
   const [profilePrompt, setProfilePrompt] = useState<{
     gameVersion: string;
@@ -108,10 +111,42 @@ export default function App() {
   const [westronAccount, setWestronAccount] = useState<WestronAccount | null>(null);
   const [westronProfile, setWestronProfile] = useState<WestronProfile | null>(null);
   const [skinAvatarFailed, setSkinAvatarFailed] = useState(false);
+  const [profileAvatarShape, setProfileAvatarShape] = useState<'round' | 'square'>(
+    localStorage.getItem('westron-profile-avatar-shape') === 'square' ? 'square' : 'round',
+  );
   const [performanceThemeEnabled, setPerformanceThemeEnabled] = useState(true);
+  const [performanceThemeChoice, setPerformanceThemeChoice] = useState<'default' | 'performance' | 'quality'>(() => {
+    const choice = localStorage.getItem('westron-performance-theme');
+    return choice === 'performance' || choice === 'quality' ? choice : 'default';
+  });
   const [qualityShaderEnabled, setQualityShaderEnabled] = useState(false);
   const [customProfileManagerOpen, setCustomProfileManagerOpen] = useState(false);
   const text = (value: string) => translateUi(state?.language ?? 'en', value);
+
+  function pushFriendNotification(notification: FriendsNotification) {
+    if (notification.kind === 'friend-request' && !friendNotificationTimersRef.current.has(notification.id)) {
+      const timer = window.setTimeout(() => dismissFriendNotification(notification.id), 7000);
+      friendNotificationTimersRef.current.set(notification.id, timer);
+    }
+    setFriendNotifications((current) => {
+      const existing = current.some((item) => item.id === notification.id);
+      if (existing) {
+        return notification.kind === 'call'
+          ? current.map((item) => item.id === notification.id ? notification : item)
+          : current;
+      }
+      return [...current.slice(-3), notification];
+    });
+  }
+
+  function dismissFriendNotification(id: string) {
+    const timer = friendNotificationTimersRef.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      friendNotificationTimersRef.current.delete(id);
+    }
+    setFriendNotifications((current) => current.filter((item) => item.id !== id));
+  }
   const installedLabel = text('kurulu');
   const installedLoaderLabel = state?.loaderInstalled && state.loader
     ? `${state.loader.charAt(0).toUpperCase()}${state.loader.slice(1)} ${installedLabel.charAt(0).toUpperCase()}${installedLabel.slice(1)}`
@@ -124,32 +159,59 @@ export default function App() {
   }, [state?.language]);
 
   useEffect(() => {
+    const removeNotificationListener = window.nocturne.onOpenFriends((notificationId) => {
+      setPage('friends');
+      if (notificationId) dismissFriendNotification(notificationId);
+    });
+    return () => {
+      removeNotificationListener();
+      for (const timer of friendNotificationTimersRef.current.values()) window.clearTimeout(timer);
+      friendNotificationTimersRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = state?.theme ?? 'dark';
   }, [state?.theme]);
 
   useEffect(() => {
+    document.documentElement.dataset.profileAvatarShape = profileAvatarShape;
+  }, [profileAvatarShape]);
+
+  useEffect(() => {
     document.documentElement.dataset.performanceMode = state?.performanceMode ?? 'default';
     document.documentElement.dataset.performanceTheme = String(performanceThemeEnabled);
-  }, [state?.performanceMode, performanceThemeEnabled]);
+    document.documentElement.dataset.performanceThemeChoice = performanceThemeChoice;
+  }, [state?.performanceMode, performanceThemeEnabled, performanceThemeChoice]);
+
+  useEffect(() => {
+    if (updateStatus?.status !== 'up-to-date') return undefined;
+    const timeout = window.setTimeout(() => {
+      setUpdateStatus((status) => status?.status === 'up-to-date' ? null : status);
+    }, 5000);
+    return () => window.clearTimeout(timeout);
+  }, [updateStatus?.status]);
 
   useEffect(() => {
     if (!state || !window.nocturne) return;
     void window.nocturne.setTitleBarTheme(
       state.theme,
-      state.performanceMode,
+      performanceThemeChoice === 'default' ? state.performanceMode : performanceThemeChoice,
       performanceThemeEnabled,
     ).catch(reportError);
-  }, [state?.theme, state?.performanceMode, performanceThemeEnabled]);
+  }, [state?.theme, state?.performanceMode, performanceThemeEnabled, performanceThemeChoice]);
 
   useEffect(() => {
     const message = error || notice;
     if (!message) return undefined;
+    const isPersistentUpdate =
+      notice === '' && updateStatus && ['available', 'downloading', 'downloaded', 'error', 'checking'].includes(updateStatus.status);
     const timeout = window.setTimeout(() => {
       if (error) setError('');
       else setNotice('');
-    }, message.trim().length > 100 ? 8000 : 5000);
+    }, isPersistentUpdate ? 60_000 : (updateStatus?.status === 'up-to-date' ? 5000 : (message.trim().length > 100 ? 8000 : 5000)));
     return () => window.clearTimeout(timeout);
-  }, [notice, error]);
+  }, [notice, error, updateStatus]);
 
   useEffect(() => {
     setQualityShaderEnabled(state?.performanceShaderEnabled ?? false);
@@ -267,6 +329,11 @@ export default function App() {
 
   function reportError(reason: unknown) {
     const message = reason instanceof Error ? reason.message : String(reason);
+    if (message.includes('404') || message.includes('API uç noktası') || message.includes('Error:')) {
+      setError('');
+      setNotice('');
+      return;
+    }
     setError(text(message));
   }
 
@@ -646,8 +713,8 @@ export default function App() {
         if (installResult.status === 'confirmation-required') return '';
         if (!installResult.files.length) return `${modName} zaten yüklü.`;
         return installResult.dependencies.length > 0
-          ? `${modName} ve ${installResult.dependencies.length} gerekli mod eklendi.`
-          : `${modName} eklendi.`;
+          ? `${modName} sürümü değiştirildi; ${installResult.dependencies.length} gerekli mod güncellendi.`
+          : `${modName} sürümü değiştirildi.`;
       },
     );
     if (!result) return;
@@ -760,7 +827,7 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage('home'); }}>
-          <span className="brand-mark"><Layers3 size={19} strokeWidth={1.8} /></span>
+          <span className="brand-mark"><img src={launcherIcon} alt="" draggable="false" /></span>
           <span className="brand-name">Westron<span>.</span><small>LAUNCHER</small></span>
         </a>
 
@@ -844,24 +911,81 @@ export default function App() {
 
       <main className="main-area">
         <header className="topbar">
-          {window.nocturne.platform !== 'win32' && (
-            <div className="window-controls">
-              <button type="button" aria-label={text('Pencereyi küçült')} title={text('Pencereyi küçült')} onClick={() => { void window.nocturne.controlWindow('minimize'); }}><Minus size={14} /></button>
-              <button type="button" aria-label={text('Pencereyi büyüt veya geri yükle')} title={text('Pencereyi büyüt veya geri yükle')} onClick={() => { void window.nocturne.controlWindow('maximize'); }}><Square size={13} /></button>
-              <button type="button" className="window-close" aria-label={text('Kapat')} title={text('Kapat')} onClick={() => { void window.nocturne.controlWindow('close'); }}><X size={15} /></button>
-            </div>
-          )}
+          <div className="window-controls">
+            <button type="button" aria-label={text('Pencereyi küçült')} title={text('Pencereyi küçült')} onClick={() => { void window.nocturne.controlWindow('minimize'); }}><Minus size={14} /></button>
+            <button type="button" aria-label={text('Pencereyi büyüt veya geri yükle')} title={text('Pencereyi büyüt veya geri yükle')} onClick={() => { void window.nocturne.controlWindow('maximize'); }}><Square size={13} /></button>
+            <button type="button" className="window-close" aria-label={text('Kapat')} title={text('Kapat')} onClick={() => { void window.nocturne.controlWindow('close'); }}><X size={15} /></button>
+          </div>
           <div className="breadcrumbs"><span>WESTRON LAUNCHER</span><ChevronDown size={13} /><strong>{pageTitle}</strong></div>
           <div className="topbar-right">
-            <span className="top-version"><span className="online-dot" />{state?.menuModInstalled ? text('Westron Launcher hazır') : installedLoaderLabel ?? `${text('Sürüm')} ${state?.gameVersion ?? '…'}`}</span>
-            <button className="icon-button" aria-label={text('Yardım')} onClick={() => setNotice(text('Profil kurulumu ve içerik yönetimi için sol menüyü kullanın.'))}><CircleHelp size={17} /></button>
+            <span className="top-version"><span className="online-dot" />{state?.menuModInstalled ? text('Westron Launcher Hazır') : installedLoaderLabel ?? `${text('Sürüm')} ${state?.gameVersion ?? '…'}`}</span>
+            <button
+              className="topbar-profile"
+              type="button"
+              aria-label={text('Hesap')}
+              title={text('Hesap')}
+              onClick={() => setPage('account')}
+            >
             {westronProfile?.skin && !skinAvatarFailed
               ? <div className="avatar avatar-skin"><SkinFaceAvatar profile={westronProfile} size="small" onError={() => setSkinAvatarFailed(true)} /></div>
               : <div className="avatar">W</div>}
+            </button>
           </div>
         </header>
 
         <div className="content">
+          {friendNotifications.length > 0 && (
+            <div className="friend-notifications" aria-live="polite">
+              {friendNotifications.map((notification) => (
+                <article
+                  className={`friend-notification friend-notification-${notification.kind}`}
+                  key={notification.id}
+                  role={notification.kind === 'friend-request' ? 'alert' : 'status'}
+                >
+                  {notification.kind === 'call' ? <Phone size={17} /> : <Users size={17} />}
+                  <button
+                    className="friend-notification-copy"
+                    type="button"
+                    onClick={() => {
+                      setPage('friends');
+                      if (notification.kind !== 'call') dismissFriendNotification(notification.id);
+                    }}
+                  >
+                    <strong>{notification.sender}</strong>
+                    <span>{notification.message}</span>
+                  </button>
+                  <div className="friend-notification-actions">
+                    {notification.actions?.map((action) => (
+                      <button
+                        className={`button button-${action.variant ?? 'secondary'} button-small`}
+                        key={action.label}
+                        type="button"
+                        onClick={() => {
+                          setPage('friends');
+                          action.onClick();
+                          if (action.dismissOnClick !== false) dismissFriendNotification(notification.id);
+                        }}
+                      >
+                        {action.icon === 'phone' ? <Phone size={13} />
+                          : action.icon === 'phone-off' ? <PhoneOff size={13} />
+                            : null}
+                        {action.label}
+                      </button>
+                    ))}
+                    <button
+                      className="friends-icon-action"
+                      type="button"
+                      aria-label={text('Kapat')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        dismissFriendNotification(notification.id);
+                      }}
+                    ><X size={14} /></button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
           {error && <div className="toast toast-error"><X size={16} />{translateUi(state?.language ?? 'en', error)}</div>}
           {notice && <div className="toast toast-success"><Check size={16} />{translateUi(state?.language ?? 'en', notice)}</div>}
           {updateStatus && ['checking', 'available', 'downloading', 'downloaded', 'up-to-date', 'error'].includes(updateStatus.status) && (
@@ -910,6 +1034,7 @@ export default function App() {
               onSignOutMicrosoft={() => { void signOutMicrosoft(); }}
               onOpenSettings={() => setPage('settings')}
               onMods={() => setPage('mods')}
+              onOpenFriends={() => setPage('friends')}
             />
           )}
           {page === 'mods' && (
@@ -1041,7 +1166,10 @@ export default function App() {
             language={state?.language ?? 'en'}
             isActive={page === 'friends'}
             onOpenAccount={() => setPage('account')}
-            onIncomingCall={() => setPage('friends')}
+            onOpenScreenshots={() => setPage('screenshots')}
+            onOpenFriends={() => setPage('friends')}
+            onNotification={pushFriendNotification}
+            onDismissNotification={dismissFriendNotification}
           />
           {page === 'settings' && (
             <SettingsPage
@@ -1060,6 +1188,20 @@ export default function App() {
               publisherAccount={westronAccount}
               publisherBusy={publisherBusy}
               onPublishUpdate={() => { void publishUpdate(); }}
+              performanceThemeChoice={performanceThemeChoice}
+              onPerformanceThemeChoiceChange={(choice) => {
+                setPerformanceThemeChoice(choice);
+                localStorage.setItem('westron-performance-theme', choice);
+              }}
+              profileAvatarShape={profileAvatarShape}
+              onProfileAvatarShapeChange={(shape) => {
+                setProfileAvatarShape(shape);
+                localStorage.setItem('westron-profile-avatar-shape', shape);
+              }}
+              onOpenVoiceSettings={() => {
+                sessionStorage.setItem('westron-open-voice-settings', 'true');
+                setPage('friends');
+              }}
             />
           )}
         </div>
@@ -1360,7 +1502,7 @@ function RemoveConfirmationModal({ fileName, size, contentType, busy, onCancel, 
 }
 
 function AppearanceRemovalModal({ appearanceType, busy, onCancel, onConfirm }: {
-  appearanceType: 'skin' | 'cape';
+  appearanceType: 'skin' | 'cape' | 'elytra';
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
@@ -1369,7 +1511,9 @@ function AppearanceRemovalModal({ appearanceType, busy, onCancel, onConfirm }: {
   const isSkin = appearanceType === 'skin';
   const title = isSkin
     ? t("Skin'in silinecek. Emin misin?")
-    : t('Pelerinin silinecek. Emin misin?');
+    : appearanceType === 'cape'
+      ? t('Pelerinin silinecek. Emin misin?')
+      : t('Elitra dokusu silinecek. Emin misin?');
   return (
     <div className="dependency-modal-backdrop" onMouseDown={(event) => {
       if (event.target === event.currentTarget && !busy) onCancel();
@@ -1904,12 +2048,12 @@ function PerformanceModesPage({
   );
 }
 
-function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, setOfflineUsername, busy, onInstall, onInstallMenu, onLaunchGame, onSignInMicrosoft, onCancelMicrosoftSignIn, onSignOutMicrosoft, onOpenSettings, onMods }: {
+function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, setOfflineUsername, busy, onInstall, onInstallMenu, onLaunchGame, onSignInMicrosoft, onCancelMicrosoftSignIn, onSignOutMicrosoft, onOpenSettings, onMods, onOpenFriends }: {
   state: LauncherState | null; microsoftAccount: MicrosoftAccount | null; microsoftBusy: boolean;
   offlineUsername: string; setOfflineUsername: (value: string) => void;
   busy: string; onInstall: () => void; onInstallMenu: () => void; onLaunchGame: () => void;
   onSignInMicrosoft: () => void; onCancelMicrosoftSignIn: () => void; onSignOutMicrosoft: () => void;
-  onOpenSettings: () => void; onMods: () => void;
+  onOpenSettings: () => void; onMods: () => void; onOpenFriends: () => void;
 }) {
   const t = useUiText();
   const profileReady = Boolean(state?.loaderInstalled);
@@ -2001,6 +2145,11 @@ function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, set
           <div className="card-main"><strong>{state?.mods.length ?? 0} {t('mod yüklü')}</strong><span>{t('Uyumlu modları keşfet ve yönet.')}</span></div>
           <button className="round-arrow" onClick={onMods} aria-label={t('Modları keşfet')}><ArrowRight size={17} /></button>
         </div>
+        <div className="info-card">
+          <div className="card-icon green"><Users size={18} /></div><span className="card-kicker">{t('SOSYAL')}</span>
+          <div className="card-main"><strong>{t('Arkadaşlar')}</strong><span>{t('Arkadaşlarınla sohbet et ve gruplarını yönet.')}</span></div>
+          <button className="round-arrow" onClick={onOpenFriends} aria-label={t('Arkadaşları aç')}><ArrowRight size={17} /></button>
+        </div>
       </div>
 
       <div className="status-row">
@@ -2067,7 +2216,7 @@ function ModsPage({ mods, totalHits, query, setQuery, busy, installedMods, insta
         <div className="load-more-results">
           <button className="button button-secondary" onClick={onLoadMore} disabled={Boolean(busy)}>
             {busy === 'search-more' ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
-            {t('Daha fazla seçenek göster')}
+            {t('Daha fazla öğe göster')}
           </button>
         </div>
       )}
@@ -2202,7 +2351,7 @@ function ModrinthPackPage({ type, projects, totalHits, query, setQuery, busy, in
         <div className="load-more-results">
           <button className="button button-secondary" onClick={onLoadMore} disabled={Boolean(busy)}>
             {busy === `search:${type}:more` ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
-            {t('Daha fazla seçenek göster')}
+            {t('Daha fazla öğe göster')}
           </button>
         </div>
       )}
@@ -2431,6 +2580,102 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
   const [selectedScreenshotImage, setSelectedScreenshotImage] = useState('');
   const [loadingFullImage, setLoadingFullImage] = useState(false);
   const [fullImageError, setFullImageError] = useState(false);
+  const [shareScreenshot, setShareScreenshot] = useState<GameScreenshot | null>(null);
+  const [shareFriendIds, setShareFriendIds] = useState<string[]>([]);
+  const [shareFriends, setShareFriends] = useState<WestronFriend[]>([]);
+  const [shareGroupIds, setShareGroupIds] = useState<string[]>([]);
+  const [shareGroups, setShareGroups] = useState<WestronFriendGroup[]>([]);
+  const [shareTarget, setShareTarget] = useState<'friends' | 'groups'>('friends');
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareError, setShareError] = useState('');
+  const shareSelectionCount = shareFriendIds.length + shareGroupIds.length;
+  const [downloadScreenshotPrompt, setDownloadScreenshotPrompt] = useState<GameScreenshot | null>(null);
+  const [downloadBusy, setDownloadBusy] = useState(false);
+
+  async function openShare(screenshot: GameScreenshot) {
+    setShareScreenshot(screenshot);
+    setShareFriendIds([]);
+    setShareGroupIds([]);
+    setShareTarget('friends');
+    setShareError('');
+    setShareFriends([]);
+    setShareGroups([]);
+    try {
+      const [friendsResult, groupsResult] = await Promise.allSettled([
+        window.nocturne.listWestronFriends(),
+        window.nocturne.listWestronGroups(),
+      ]);
+      if (friendsResult.status === 'rejected') throw friendsResult.reason;
+      setShareFriends(friendsResult.value.friends);
+      if (groupsResult.status === 'fulfilled') {
+        setShareGroups(groupsResult.value);
+      } else {
+        setShareError(groupsResult.reason instanceof Error ? groupsResult.reason.message : String(groupsResult.reason));
+      }
+    } catch (reason) {
+      setShareError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
+  async function confirmShare() {
+    if (!shareScreenshot || shareSelectionCount === 0) return;
+    setShareBusy(true);
+    setShareError('');
+    try {
+      const [friendsResult, groupsResult] = await Promise.allSettled([
+        shareFriendIds.length
+          ? window.nocturne.shareScreenshotToFriends({
+            fileName: shareScreenshot.name,
+            recipientUserIds: shareFriendIds,
+          }).then(() => true)
+          : Promise.resolve(false),
+        shareGroupIds.length
+          ? window.nocturne.shareScreenshotToGroups({
+            fileName: shareScreenshot.name,
+            groupIds: shareGroupIds,
+          }).then(() => true)
+          : Promise.resolve(false),
+      ]);
+      const friendsSucceeded = friendsResult.status === 'fulfilled';
+      const groupsSucceeded = groupsResult.status === 'fulfilled';
+      setShareFriendIds(friendsSucceeded ? [] : shareFriendIds);
+      setShareGroupIds(groupsSucceeded ? [] : shareGroupIds);
+      const shareErrors: string[] = [];
+      if (friendsResult.status === 'rejected') {
+        shareErrors.push(friendsResult.reason instanceof Error ? friendsResult.reason.message : String(friendsResult.reason));
+      }
+      if (groupsResult.status === 'rejected') {
+        shareErrors.push(groupsResult.reason instanceof Error ? groupsResult.reason.message : String(groupsResult.reason));
+      }
+      if (friendsSucceeded || groupsSucceeded) await window.nocturne.playWestronNotification('message');
+      if (shareErrors.length) {
+        setShareError(shareErrors.join('\n'));
+        return;
+      }
+      setShareScreenshot(null);
+    } catch (reason) {
+      setShareError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setShareBusy(false);
+    }
+  }
+
+  async function downloadScreenshot(screenshot: GameScreenshot) {
+    setDownloadScreenshotPrompt(screenshot);
+  }
+
+  async function confirmDownloadScreenshot() {
+    if (!downloadScreenshotPrompt) return;
+    setDownloadBusy(true);
+    try {
+      await window.nocturne.downloadScreenshot(downloadScreenshotPrompt.name);
+      setDownloadScreenshotPrompt(null);
+    } catch {
+      setDownloadScreenshotPrompt(null);
+    } finally {
+      setDownloadBusy(false);
+    }
+  }
 
   async function openScreenshot(screenshot: GameScreenshot) {
     setSelectedScreenshot(screenshot);
@@ -2495,6 +2740,12 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
               </button>
               <div className="screenshot-card-info">
                 <div><strong title={screenshot.name}>{screenshot.name}</strong><span>{new Intl.DateTimeFormat(languageLocales[language], { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(screenshot.modifiedAt))} · {formatBytes(screenshot.size)}</span></div>
+                <button className="remove-mod screenshot-share-action" aria-label={`${t('Paylaş')}: ${screenshot.name}`} title={t('Paylaş')} disabled={Boolean(busy)} onClick={() => void openShare(screenshot)}>
+                  <Share2 size={15} />
+                </button>
+                <button className="remove-mod screenshot-download-action" aria-label={`${t('İndir')}: ${screenshot.name}`} title={t('İndir')} disabled={Boolean(busy)} onClick={() => void downloadScreenshot(screenshot)}>
+                  <Download size={15} />
+                </button>
                 <button className="remove-mod" aria-label={`${screenshot.name} ${t('dosyasını kaldır')}`} title={t('Sil')} disabled={Boolean(busy)} onClick={() => onDelete(screenshot.name)}>
                   {busy === `screenshot:${screenshot.name}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
                 </button>
@@ -2506,7 +2757,7 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
           <div className="load-more-results">
             <button className="button button-secondary" onClick={onLoadMore} disabled={Boolean(busy)}>
               {busy === 'screenshots-more' ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
-              {t('Daha fazla seçenek göster')}
+              {t('Daha fazla öğe göster')}
             </button>
           </div>
         )}
@@ -2528,6 +2779,14 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
           <section className="screenshot-modal" role="dialog" aria-modal="true" aria-label={selectedScreenshot.name}>
             <div className="screenshot-modal-heading">
               <strong title={selectedScreenshot.name}>{selectedScreenshot.name}</strong>
+              <button type="button" className="icon-button" aria-label={t('Önceki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) >= screenshots.length - 1} onClick={() => {
+                const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
+                if (index >= 0 && index < screenshots.length - 1) void openScreenshot(screenshots[index + 1]);
+              }}><ChevronLeft size={19} /></button>
+              <button type="button" className="icon-button" aria-label={t('Sonraki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) <= 0} onClick={() => {
+                const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
+                if (index > 0) void openScreenshot(screenshots[index - 1]);
+              }}><ChevronRight size={19} /></button>
               <button type="button" className="icon-button" aria-label={t('Kapat')} onClick={() => { setSelectedScreenshot(null); setSelectedScreenshotImage(''); }}><X size={18} /></button>
             </div>
             {loadingFullImage
@@ -2535,6 +2794,71 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
               : fullImageError
                 ? <div className="screenshot-modal-loading">{t('Ekran görüntüsü yüklenemedi.')}</div>
                 : selectedScreenshotImage && <img src={selectedScreenshotImage} alt={selectedScreenshot.name} />}
+          </section>
+        </div>
+      )}
+      {downloadScreenshotPrompt && (
+        <div className="friends-confirm-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setDownloadScreenshotPrompt(null);
+        }}>
+          <section className="friends-confirm-modal screenshot-download-modal" role="dialog" aria-modal="true" aria-labelledby="download-screenshot-title">
+            <div className="friends-confirm-icon"><Download size={20} /></div>
+            <h2 id="download-screenshot-title">{t('Ekran görüntüsünü indir')}</h2>
+            <p>{t('Bu ekran görüntüsü indirilenler klasörüne kaydedilecek.')}</p>
+            <strong>{downloadScreenshotPrompt.name}</strong>
+            <div className="friends-confirm-actions">
+              <button type="button" className="button button-secondary" onClick={() => setDownloadScreenshotPrompt(null)}>{t('İptal')}</button>
+              <button type="button" className="button button-primary screenshot-confirm-download" disabled={downloadBusy} onClick={() => void confirmDownloadScreenshot()}>
+                {downloadBusy ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+                {t('İndir')}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      {shareScreenshot && (
+        <div className="dependency-modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setShareScreenshot(null);
+        }}>
+          <section className="dependency-modal screenshot-share-modal" role="dialog" aria-modal="true" aria-labelledby="share-screenshot-title">
+            <div className="dependency-modal-heading"><div><span className="eyebrow">{t('EKRAN GÖRÜNTÜSÜ')}</span><h2 id="share-screenshot-title">{t('Ekran görüntüsü gönder')}</h2></div><button className="icon-button" type="button" onClick={() => setShareScreenshot(null)}><X size={17} /></button></div>
+            <strong className="screenshot-share-name">{shareScreenshot.name}</strong>
+            {shareError && <div className="toast toast-error" role="alert">{t(shareError)}</div>}
+            <div className="screenshot-share-tabs" role="tablist" aria-label={t('Gönderilecek kişiler')}>
+              <button className={shareTarget === 'friends' ? 'selected' : ''} type="button" role="tab" aria-selected={shareTarget === 'friends'} onClick={() => setShareTarget('friends')}>{t('Arkadaşlar')} ({shareFriendIds.length})</button>
+              <button className={shareTarget === 'groups' ? 'selected' : ''} type="button" role="tab" aria-selected={shareTarget === 'groups'} onClick={() => setShareTarget('groups')}>{t('Gruplar')} ({shareGroupIds.length})</button>
+            </div>
+            <div className="screenshot-share-friends">
+              {shareTarget === 'friends' && shareFriends.map((friend) => (
+                <label key={friend.userId} className={shareFriendIds.includes(friend.userId) ? 'selected' : ''}>
+                  <input type="checkbox" checked={shareFriendIds.includes(friend.userId)} onChange={(event) => setShareFriendIds((ids) => event.target.checked ? [...ids, friend.userId] : ids.filter((id) => id !== friend.userId))} />
+                  <span className="avatar avatar-skin"><FriendSkinFace username={friend.username} /></span>
+                  <span><strong>{friend.username}</strong><small>{friend.inGame ? t('Oyunda') : friend.online ? t('Çevrimiçi') : t('Çevrimdışı')}</small></span>
+                </label>
+              ))}
+              {shareTarget === 'groups' && shareGroups.map((group) => (
+                <label key={group.id} className={shareGroupIds.includes(group.id) ? 'selected' : ''}>
+                  <input type="checkbox" checked={shareGroupIds.includes(group.id)} onChange={(event) => setShareGroupIds((ids) => event.target.checked ? [...ids, group.id] : ids.filter((id) => id !== group.id))} />
+                  <span className="screenshot-share-group-icon" aria-hidden="true">
+                    {group.members.slice(0, 3).map((member, index) => (
+                      <span className="screenshot-share-group-avatar" key={member.userId} style={{ zIndex: index + 1 }}>
+                        <FriendSkinFace username={member.username} minecraftUsername={member.minecraftUsername} />
+                      </span>
+                    ))}
+                    {group.members.length > 3 && <small>+{group.members.length - 3}</small>}
+                  </span>
+                  <span><strong>{group.name}</strong><small>{group.members.length} {t('üye')}</small></span>
+                </label>
+              ))}
+              {shareTarget === 'friends' && shareFriends.length === 0 && <p>{t('Gönderilecek arkadaş bulunamadı.')}</p>}
+              {shareTarget === 'groups' && shareGroups.length === 0 && <p>{t('Gönderilecek grup bulunamadı.')}</p>}
+            </div>
+            <div className="dependency-modal-actions">
+              <button className="button button-secondary" type="button" onClick={() => setShareScreenshot(null)}>{t('İptal')}</button>
+              <button className="button button-primary" type="button" disabled={shareBusy || shareSelectionCount === 0} onClick={() => void confirmShare()}>
+                {shareBusy ? <LoaderCircle className="spin" size={14} /> : <Share2 size={14} />}{t('Gönder')}
+              </button>
+            </div>
           </section>
         </div>
       )}
@@ -2554,6 +2878,8 @@ function SettingsPage({
   state, language, onLanguageChange, theme, onThemeChange, busy, updateStatus, onCheckUpdates,
   gameBehavior, onGameBehaviorChange,
   onOpenProfilesFolder, onOpenSelectedProfileFolder, publisherAccount, publisherBusy, onPublishUpdate,
+  performanceThemeChoice, onPerformanceThemeChoiceChange,
+  profileAvatarShape, onProfileAvatarShapeChange, onOpenVoiceSettings,
 }: {
   state: LauncherState | null;
   language: AppLanguage;
@@ -2570,6 +2896,11 @@ function SettingsPage({
   publisherAccount: WestronAccount | null;
   publisherBusy: boolean;
   onPublishUpdate: () => void;
+  performanceThemeChoice: 'default' | 'performance' | 'quality';
+  onPerformanceThemeChoiceChange: (choice: 'default' | 'performance' | 'quality') => void;
+  profileAvatarShape: 'round' | 'square';
+  onProfileAvatarShapeChange: (shape: 'round' | 'square') => void;
+  onOpenVoiceSettings: () => void;
 }) {
   const t = (key: string) => translateUi(language, key);
   const ui = (value: string) => translateUi(language, value);
@@ -2599,6 +2930,46 @@ function SettingsPage({
               <option value="light">{t('lightTheme')}</option>
             </select>
           </label>
+        </div>
+        <div className="setting-row">
+          <div><strong>{t('Westron Modu Teması')}</strong><span>{t('Seçili temanın renk düzenini değiştirir.')}</span></div>
+          <label className="language-select-label">
+            <select value={performanceThemeChoice} onChange={(event) => {
+              const choice = event.target.value;
+              if (choice === 'default' || choice === 'performance' || choice === 'quality') {
+                onPerformanceThemeChoiceChange(choice);
+              }
+            }}>
+              <option value="default">{t('Varsayılan tema')}</option>
+              <option value="performance">{t('Performans teması')}</option>
+              <option value="quality">{t('Kalite teması')}</option>
+            </select>
+          </label>
+        </div>
+      </section>
+      <section className="settings-panel">
+        <div className="settings-heading"><div className="card-icon violet"><UserRound size={18} /></div><div><h3>{t('Profil fotoğrafları')}</h3><span>{t('Uygulama içindeki skin yüzlerinin görünümünü seç.')}</span></div></div>
+        <div className="setting-row">
+          <div><strong>{t('Profil fotoğrafı şekli')}</strong><span>{t('Arkadaşlar, hesap ve çağrı alanlarında kullanılır.')}</span></div>
+          <label className="language-select-label">
+            <select value={profileAvatarShape} onChange={(event) => onProfileAvatarShapeChange(event.target.value as 'round' | 'square')}>
+              <option value="round">{t('Yuvarlak')}</option>
+              <option value="square">{t('Kare')}</option>
+            </select>
+          </label>
+        </div>
+      </section>
+      <section className="settings-panel">
+        <div className="settings-heading"><div className="card-icon green"><Mic size={18} /></div><div><h3>{t('Ses Ayarları')}</h3><span>{t('Mikrofon, hoparlör ve oyun içi arayüz seçeneklerini ayarla.')}</span></div></div>
+        <div className="setting-row">
+          <div><strong>{t('Sesli sohbet')}</strong><span>{t('Sesli sohbet ayarlarına ve aktif arama görünümüne git.')}</span></div>
+          <button
+            className="button button-secondary button-small"
+            type="button"
+            aria-label={t('Ses Ayarları')}
+            title={t('Ses Ayarları')}
+            onClick={onOpenVoiceSettings}
+          ><Mic size={14} />{t('Ses Ayarları')}</button>
         </div>
       </section>
       <section className="settings-panel">
@@ -2681,6 +3052,7 @@ function SkinModelPreview({ profile, language }: {
   const [paused, setPaused] = useState(false);
   const [autoRotate, setAutoRotate] = useState(true);
   const [speed, setSpeed] = useState(1);
+  const [showElytra, setShowElytra] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const hasSkin = Boolean(profile?.skin);
 
@@ -2738,7 +3110,7 @@ function SkinModelPreview({ profile, language }: {
     let active = true;
     setPreviewError('');
     const skin = profile?.skin;
-    const cape = profile?.cape;
+    const backTexture = showElytra ? profile?.elytra : profile?.cape;
     const cacheBust = (url: string, updatedAt: string) =>
       `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(updatedAt)}`;
     const loadTextures = async () => {
@@ -2750,8 +3122,10 @@ function SkinModelPreview({ profile, language }: {
         } else {
           viewer.loadSkin(null);
         }
-        if (cape) {
-          await viewer.loadCape(cacheBust(cape.url, cape.updatedAt));
+        if (backTexture) {
+          await viewer.loadCape(cacheBust(backTexture.url, backTexture.updatedAt), {
+            backEquipment: showElytra ? 'elytra' : 'cape',
+          });
         } else {
           viewer.loadCape(null);
         }
@@ -2765,7 +3139,18 @@ function SkinModelPreview({ profile, language }: {
     return () => {
       active = false;
     };
-  }, [profile?.skin?.url, profile?.skin?.updatedAt, profile?.skin?.model, profile?.cape?.url, profile?.cape?.updatedAt, viewerReady, language]);
+  }, [
+    profile?.skin?.url,
+    profile?.skin?.updatedAt,
+    profile?.skin?.model,
+    profile?.cape?.url,
+    profile?.cape?.updatedAt,
+    profile?.elytra?.url,
+    profile?.elytra?.updatedAt,
+    showElytra,
+    viewerReady,
+    language,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -2809,6 +3194,15 @@ function SkinModelPreview({ profile, language }: {
       <div className="skin-3d-stage">
         <canvas ref={canvasRef} aria-label={t('3D karakter önizlemesi')} />
         {!hasSkin && <div className="skin-3d-empty"><UserRound size={25} /><span>{t('Karakteri görmek için önce bir skin yükle.')}</span></div>}
+        <label className="skin-3d-elytra-toggle">
+          <input
+            type="checkbox"
+            checked={showElytra}
+            onChange={(event) => setShowElytra(event.target.checked)}
+            disabled={!hasSkin || !profile?.elytra}
+          />
+          <span>{t('3D önizlemede elitrayı göster')}</span>
+        </label>
         {previewError && <div className="skin-3d-error" role="status">{t('3D önizleme görseli yüklenemedi. API görsellerinde CORS iznini kontrol edin.')}</div>}
       </div>
       <div className="skin-3d-controls">
@@ -2869,12 +3263,25 @@ function SkinFaceAvatar({ profile, size, fallback, onError }: {
   onError?: () => void;
 }) {
   const skin = profile?.skin;
-  if (!skin) return <span className={`skin-face-fallback skin-face-fallback-${size}`}>{fallback ?? 'W'}</span>;
-  const src = `${skin.url}${skin.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(skin.updatedAt)}`;
+  const [failed, setFailed] = useState(false);
+  const [legacySkin, setLegacySkin] = useState(false);
+  useEffect(() => {
+    setFailed(false);
+    setLegacySkin(false);
+  }, [skin?.url, skin?.updatedAt]);
+  if (!skin || failed) return <span className={`skin-face-fallback skin-face-fallback-${size}`}>{fallback ?? 'W'}</span>;
+  const skinImageUrl = `${skin.url}${skin.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(skin.updatedAt)}`;
+  const handleImageError = () => {
+    setFailed(true);
+    onError?.();
+  };
+  const handleOverlayError = (event: SyntheticEvent<HTMLImageElement>) => {
+    event.currentTarget.style.display = 'none';
+  };
   return (
-    <span className={`skin-face-texture skin-face-texture-${size}`} aria-label={profile.username}>
-      <img className="skin-face-base" src={src} alt="" onError={onError} />
-      <img className="skin-face-overlay" src={src} alt="" onError={onError} />
+    <span className={`skin-face-texture skin-face-texture-${size}`} data-skin-format={legacySkin ? 'legacy' : 'modern'} aria-label={profile.username}>
+      <img className="skin-face-base" src={skinImageUrl} alt="" onLoad={(event) => setLegacySkin(event.currentTarget.naturalHeight * 2 === event.currentTarget.naturalWidth)} onError={handleImageError} />
+      <img className="skin-face-overlay" src={skinImageUrl} alt="" onLoad={(event) => setLegacySkin(event.currentTarget.naturalHeight * 2 === event.currentTarget.naturalWidth)} onError={handleOverlayError} />
     </span>
   );
 }
@@ -2890,7 +3297,7 @@ function SkinAppearancePanel({ profile, onProfileChange }: {
   const [profileRefreshing, setProfileRefreshing] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [pendingRemoval, setPendingRemoval] = useState<'skin' | 'cape' | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<'skin' | 'cape' | 'elytra' | null>(null);
 
   async function perform(action: () => Promise<void>): Promise<void> {
     setBusy(true);
@@ -2924,6 +3331,15 @@ function SkinAppearancePanel({ profile, onProfileChange }: {
     });
   }
 
+  async function uploadElytra() {
+    await perform(async () => {
+      const upload = await window.nocturne.uploadWestronElytra();
+      if (upload.cancelled) return;
+      onProfileChange(upload.profile ?? null);
+      setMessage(t('Elitra Westron hesabınıza yüklendi.'));
+    });
+  }
+
   async function refreshProfile() {
     setProfileRefreshing(true);
     setError('');
@@ -2942,9 +3358,13 @@ function SkinAppearancePanel({ profile, onProfileChange }: {
     await perform(async () => {
       const next = pendingRemoval === 'skin'
         ? await window.nocturne.deleteWestronSkin()
-        : await window.nocturne.deleteWestronCape();
+        : pendingRemoval === 'cape'
+          ? await window.nocturne.deleteWestronCape()
+          : await window.nocturne.deleteWestronElytra();
       onProfileChange(next);
-      setMessage(t(pendingRemoval === 'skin' ? 'Skin kaldırıldı.' : 'Pelerin kaldırıldı.'));
+      setMessage(t(pendingRemoval === 'skin'
+        ? 'Skin kaldırıldı.'
+        : pendingRemoval === 'cape' ? 'Pelerin kaldırıldı.' : 'Elitra kaldırıldı.'));
       setPendingRemoval(null);
     });
   }
@@ -2976,6 +3396,16 @@ function SkinAppearancePanel({ profile, onProfileChange }: {
           {profile?.cape && <button className="button button-secondary button-small" onClick={() => setPendingRemoval('cape')} disabled={busy}><Trash2 size={14} />{t('Pelerini kaldır')}</button>}
         </div>
       </div>
+      <div className="setting-row">
+        <div className="skin-profile-summary">
+          {profile?.elytra ? <img className="cape-preview" src={`${profile.elytra.url}${profile.elytra.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(profile.elytra.updatedAt)}`} alt={t('Westron hesabındaki mevcut elitra')} /> : <span className="cape-preview cape-preview-empty"><Image size={17} /></span>}
+          <span><strong>{t('Westron elitrası')}</strong><small>{profile?.elytra ? `${t('Güncelleme')}: ${new Date(profile.elytra.updatedAt).toLocaleDateString(languageLocales[language])}` : t('Henüz elitra yüklenmedi. 64×32 PNG dosyası seç.')}</small></span>
+        </div>
+        <div className="account-actions">
+          <button className="button button-secondary button-small" onClick={() => void uploadElytra()} disabled={busy}><Upload size={14} />{t('PNG elitra yükle')}</button>
+          {profile?.elytra && <button className="button button-secondary button-small" onClick={() => setPendingRemoval('elytra')} disabled={busy}><Trash2 size={14} />{t('Elitrayı kaldır')}</button>}
+        </div>
+      </div>
       {error && <div className="account-message account-error">{error}</div>}
       {message && <div className="account-message">{message}</div>}
       {pendingRemoval && <AppearanceRemovalModal appearanceType={pendingRemoval} busy={busy} onCancel={() => setPendingRemoval(null)} onConfirm={() => void confirmRemoval()} />}
@@ -3005,6 +3435,7 @@ function WestronAccountPanel({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [pendingLogout, setPendingLogout] = useState(false);
 
   function handleAccountError(reason: unknown, fallbackEmail?: string) {
     const rawMessage = reason instanceof Error ? reason.message : String(reason);
@@ -3014,7 +3445,8 @@ function WestronAccountPanel({
       onProfileChange(null);
       setForm('login');
     }
-    setError(t(rawMessage));
+    if (rawMessage.includes('404') || rawMessage.includes('Error:')) setError('');
+    else setError(t(rawMessage));
   }
 
   async function performAccountAction(action: () => Promise<string | WestronAccount | void>) {
@@ -3066,7 +3498,7 @@ function WestronAccountPanel({
   async function submitPasswordReset(event: React.FormEvent) {
     event.preventDefault();
     const result = await performAccountAction(() =>
-      window.nocturne.resetWestronPassword({ email, token, newPassword }));
+      window.nocturne.resetPassword({ email, token, newPassword }));
     setNewPassword('');
     if (typeof result === 'string') {
       setToken('');
@@ -3075,15 +3507,21 @@ function WestronAccountPanel({
   }
 
   async function logout() {
+    setPendingLogout(true);
+  }
+
+  async function confirmLogout() {
     await performAccountAction(async () => {
       const result = await window.nocturne.logoutWestronAccount();
       onAccountChange(null);
       onProfileChange(null);
+      setPendingLogout(false);
       return result;
     });
   }
 
   return (
+    <>
     <section className="settings-panel account-page-panel">
       <div className="settings-heading">
         <div className="card-icon violet"><UserRound size={18} /></div>
@@ -3157,7 +3595,7 @@ function WestronAccountPanel({
             <form className="account-form" onSubmit={(event) => void submitPasswordReset(event)}>
               <p>{t('Sıfırlama kodu almak için hesabınızın e-posta adresini girin.')}</p>
               <label>{t('E-posta')}<input type="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-              <button type="button" className="button button-secondary button-small" disabled={busy} onClick={() => void performAccountAction(() => window.nocturne.requestWestronPasswordReset({ email }))}>{t('Sıfırlama kodu iste')}</button>
+              <button type="button" className="button button-secondary button-small" disabled={busy} onClick={() => void performAccountAction(() => window.nocturne.requestPasswordReset({ email }))}>{t('Sıfırlama kodu iste')}</button>
               <label>{t('Sıfırlama kodu')}<input required minLength={40} maxLength={50} value={token} onChange={(event) => setToken(event.target.value)} /></label>
               <label>{t('Yeni parola')}<input type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /></label>
               <button className="button button-primary button-small" disabled={busy}>{t('Parolayı yenile')}</button>
@@ -3168,5 +3606,21 @@ function WestronAccountPanel({
       {error && <div className="account-message account-error">{error}</div>}
       {message && <div className="account-message">{message}</div>}
     </section>
+    {pendingLogout && (
+      <div className="friends-confirm-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget) setPendingLogout(false);
+      }}>
+        <section className="friends-confirm-modal" role="dialog" aria-modal="true">
+          <div className="friends-confirm-icon"><LogOut size={20} /></div>
+          <h2>{t('Çıkış yapmak istiyor musunuz?')}</h2>
+          <p>{t('Westron hesabınız bu cihazdan kapatılacak.')}</p>
+          <div className="friends-confirm-actions">
+            <button type="button" className="button button-secondary" onClick={() => setPendingLogout(false)}>{t('İptal')}</button>
+            <button type="button" className="button button-danger" disabled={busy} onClick={() => void confirmLogout()}>{t('Çıkış yap')}</button>
+          </div>
+        </section>
+      </div>
+    )}
+    </>
   );
 }

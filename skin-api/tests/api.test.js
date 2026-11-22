@@ -43,7 +43,199 @@ beforeEach(async () => {
 
 test('allows enough time for large release uploads to arrive through a slow connection', () => {
   assert.equal(app.server.requestTimeout, 90 * 60 * 1000);
-  assert.equal(app.skinDatabase.pragma('user_version', { simple: true }), 5);
+  assert.equal(app.skinDatabase.pragma('user_version', { simple: true }), 15);
+});
+
+test('migrates version 14 databases by adding the separate elytra texture table', async () => {
+  const database = new Database(':memory:');
+  try {
+    database.exec(await readFile(new URL('../schema.sql', import.meta.url), 'utf8'));
+    database.exec('DROP TABLE elytras; PRAGMA user_version = 14;');
+    await migrateDatabase(database);
+    assert.equal(database.pragma('user_version', { simple: true }), 15);
+    assert.ok(database.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'elytras'").get());
+  } finally {
+    database.close();
+  }
+});
+
+test('migrates existing groups to retain their original creator', async () => {
+  const database = new Database(':memory:');
+  try {
+    database.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        minecraft_username TEXT,
+        minecraft_username_normalized TEXT
+      );
+      CREATE TABLE presence (
+        user_id TEXT PRIMARY KEY,
+        in_game INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        server_name TEXT
+      );
+      CREATE TABLE ephemeral_messages (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL DEFAULT 'text',
+        photo_url TEXT,
+        sender_photo_viewed_at TEXT,
+        recipient_photo_viewed_at TEXT
+      );
+      CREATE TABLE friend_groups (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE friend_group_messages (
+        id TEXT PRIMARY KEY,
+        group_id TEXT NOT NULL REFERENCES friend_groups(id) ON DELETE CASCADE,
+        sender_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO users (id) VALUES ('group-creator');
+      INSERT INTO friend_groups (id, name, owner_user_id, created_at)
+      VALUES ('existing-group', 'Existing group', 'group-creator', '2026-01-01T00:00:00.000Z');
+      PRAGMA user_version = 10;
+    `);
+
+    await migrateDatabase(database);
+
+    assert.equal(database.pragma('user_version', { simple: true }), 15);
+    assert.equal(database.prepare(
+      'SELECT created_by_user_id FROM friend_groups WHERE id = ?',
+    ).get('existing-group').created_by_user_id, 'group-creator');
+    const messageColumns = new Set(database.pragma('table_info(friend_group_messages)').map((column) => column.name));
+    assert.equal(messageColumns.has('kind'), true);
+    assert.equal(messageColumns.has('photo_file_name'), true);
+  } finally {
+    database.close();
+  }
+});
+
+test('stores reusable direct photos for sender and recipient', async () => {
+  const alice = await createAccount('PhotoSender');
+  const bob = await createAccount('PhotoReceiver');
+  const aliceHeaders = bearer(alice.accessToken);
+  const bobHeaders = bearer(bob.accessToken);
+  await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/requests',
+    headers: aliceHeaders,
+    payload: { username: 'PhotoReceiver' },
+  });
+  const requestId = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends',
+    headers: bobHeaders,
+  })).json().incomingRequests[0].requestId;
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: `/api/v1/friends/requests/${requestId}/respond`,
+    headers: bobHeaders,
+    payload: { accept: true },
+  })).statusCode, 200);
+  const recipientUserId = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends',
+    headers: aliceHeaders,
+  })).json().friends[0].userId;
+  const photoPixels = randomBytes(1600 * 1200 * 3);
+  const sourcePhoto = await sharp(photoPixels, {
+    raw: { width: 1600, height: 1200, channels: 3 },
+  }).png().toBuffer();
+  assert.ok(sourcePhoto.length > 1024 * 1024 && sourcePhoto.length < 10 * 1024 * 1024);
+  const upload = multipartPhoto(sourcePhoto, recipientUserId);
+  upload.headers.authorization = `Bearer ${alice.accessToken}`;
+
+  const sent = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/messages/photo',
+    ...upload,
+  });
+  assert.equal(sent.statusCode, 201, sent.body);
+  assert.ok(sent.json().messageId);
+  const photoExpiry = app.skinDatabase.prepare('SELECT expires_at AS expiresAt FROM ephemeral_messages WHERE id = ?')
+    .get(sent.json().messageId).expiresAt;
+  assert.ok(photoExpiry > Date.now() + 29 * 24 * 60 * 60 * 1000);
+  assert.ok(photoExpiry <= Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const inbox = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/messages/inbox',
+    headers: bobHeaders,
+  });
+  assert.equal(inbox.json().find((message) => message.messageId === sent.json().messageId).kind, 'photo');
+  const photoPath = new URL(sent.json().photoUrl).pathname;
+  const aliceUserId = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends',
+    headers: bobHeaders,
+  })).json().friends[0].userId;
+  const recipientConversation = `/api/v1/friends/messages/conversation/${aliceUserId}`;
+  const senderConversation = `/api/v1/friends/messages/conversation/${recipientUserId}`;
+  assert.equal((await app.inject({
+    method: 'GET',
+    url: recipientConversation,
+    headers: bobHeaders,
+  })).json()[0].photoViewedByMe, false);
+  const senderPhoto = await app.inject({
+    method: 'GET',
+    url: `/api/v1/friends/messages/${sent.json().messageId}/photo`,
+    headers: aliceHeaders,
+  });
+  assert.equal(senderPhoto.statusCode, 200);
+  assert.equal(senderPhoto.headers['cache-control'], 'private, no-store');
+  assert.ok(senderPhoto.rawPayload.length > 1024 * 1024);
+  assert.equal((await app.inject({
+    method: 'GET',
+    url: senderConversation,
+    headers: aliceHeaders,
+  })).json()[0].photoViewedByMe, false);
+  assert.equal((await app.inject({
+    method: 'GET',
+    url: recipientConversation,
+    headers: bobHeaders,
+  })).json()[0].photoViewedByMe, false);
+  const senderPhotoAgain = await app.inject({
+    method: 'GET',
+    url: `/api/v1/friends/messages/${sent.json().messageId}/photo`,
+    headers: aliceHeaders,
+  });
+  assert.equal(senderPhotoAgain.statusCode, 200);
+  assert.deepEqual(senderPhotoAgain.rawPayload, senderPhoto.rawPayload);
+  assert.equal((await app.inject({
+    method: 'GET',
+    url: `/api/v1/friends/messages/${sent.json().messageId}/photo`,
+    headers: bearer((await createAccount('PhotoOutsider')).accessToken),
+  })).statusCode, 404);
+  const photo = await app.inject({ method: 'GET', url: photoPath });
+  assert.equal(photo.statusCode, 200);
+  assert.equal(photo.headers['content-type'], 'image/png');
+  assert.ok(photo.rawPayload.length > 1024 * 1024);
+  assert.ok(photo.rawPayload.length <= 5 * 1024 * 1024);
+  assert.equal((await app.inject({ method: 'GET', url: photoPath })).statusCode, 200);
+  assert.equal((await app.inject({
+    method: 'GET',
+    url: recipientConversation,
+    headers: bobHeaders,
+  })).json()[0].photoViewedByMe, false);
+  assert.equal((await app.inject({
+    method: 'GET',
+    url: `/api/v1/friends/messages/${sent.json().messageId}/photo`,
+    headers: bobHeaders,
+  })).statusCode, 200);
+  const photoFileName = path.basename(new URL(sent.json().photoUrl).pathname);
+  app.skinDatabase.prepare(`
+    UPDATE ephemeral_messages SET expires_at = ? WHERE id = ?
+  `).run(Date.now() - 1, sent.json().messageId);
+  const expiredInbox = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/messages/inbox',
+    headers: bobHeaders,
+  });
+  assert.equal(expiredInbox.json().some((message) => message.messageId === sent.json().messageId), false);
+  await assert.rejects(readFile(path.join(dataDir, 'photos', photoFileName)), { code: 'ENOENT' });
 });
 
 test('repairs version 4 databases missing Minecraft username columns', async () => {
@@ -66,9 +258,47 @@ test('repairs version 4 databases missing Minecraft username columns', async () 
     assert.equal(userColumns.has('minecraft_username'), true);
     assert.equal(userColumns.has('minecraft_username_normalized'), true);
     assert.equal(database.prepare('SELECT username FROM users WHERE id = ?').get('existing-user').username, 'ExistingUser');
-    assert.equal(database.pragma('user_version', { simple: true }), 5);
+    assert.equal(database.pragma('user_version', { simple: true }), 15);
     await migrateDatabase(database);
-    assert.equal(database.pragma('user_version', { simple: true }), 5);
+    assert.equal(database.pragma('user_version', { simple: true }), 15);
+    const messageColumns = new Set(database.pragma('table_info(ephemeral_messages)').map((column) => column.name));
+    assert.equal(messageColumns.has('sender_photo_viewed_at'), true);
+    assert.equal(messageColumns.has('recipient_photo_viewed_at'), true);
+  } finally {
+    database.close();
+  }
+});
+
+test('preserves photo compatibility columns when migrating existing version 7 databases', async () => {
+  const database = new Database(':memory:');
+  try {
+    database.exec(`
+      CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE presence (
+        user_id TEXT PRIMARY KEY,
+        in_game INTEGER NOT NULL,
+        last_seen_at INTEGER NOT NULL,
+        server_name TEXT
+      );
+      CREATE TABLE ephemeral_messages (
+        id TEXT PRIMARY KEY,
+        sender_user_id TEXT NOT NULL,
+        recipient_user_id TEXT NOT NULL,
+        body TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'text',
+        photo_url TEXT
+      );
+      PRAGMA user_version = 7;
+    `);
+
+    await migrateDatabase(database);
+
+    const messageColumns = new Set(database.pragma('table_info(ephemeral_messages)').map((column) => column.name));
+    assert.equal(messageColumns.has('sender_photo_viewed_at'), true);
+    assert.equal(messageColumns.has('recipient_photo_viewed_at'), true);
+    assert.equal(database.pragma('user_version', { simple: true }), 15);
   } finally {
     database.close();
   }
@@ -87,6 +317,19 @@ async function register(username = 'SkinTester', email = `${username}@example.te
   });
   assert.equal(response.statusCode, 201, response.body);
   return { response, email };
+}
+
+function multipartElytra(buffer, { contentType = 'image/png' } = {}) {
+  const boundary = 'westron-elytra-api-boundary';
+  const payload = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="elytra"; filename="elytra.png"\r\nContent-Type: ${contentType}\r\n\r\n`),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return {
+    payload,
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  };
 }
 
 async function verify(email, token = mailTokens.verification.at(-1)) {
@@ -142,6 +385,33 @@ function multipartCape(buffer, { contentType = 'image/png' } = {}) {
   };
 }
 
+function multipartPhoto(buffer, recipientUserId) {
+  const boundary = 'westron-photo-api-boundary';
+  const payload = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="recipientUserId"\r\n\r\n${recipientUserId}\r\n`),
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="photo.png"\r\nContent-Type: image/png\r\n\r\n`),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return {
+    payload,
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  };
+}
+
+function multipartGroupPhoto(buffer, { contentType = 'image/png' } = {}) {
+  const boundary = 'westron-group-photo-api-boundary';
+  const payload = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="photo"; filename="group.png"\r\nContent-Type: ${contentType}\r\n\r\n`),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return {
+    payload,
+    headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+  };
+}
+
 function bearer(token) {
   return { authorization: `Bearer ${token}` };
 }
@@ -188,11 +458,28 @@ test('health, OpenAPI document and implemented routes are available', async () =
     ['POST /api/v1/auth/logout', '/api/v1/auth/logout'],
     ['GET /api/v1/me', '/api/v1/me'],
     ['GET /api/v1/friends', '/api/v1/friends'],
+    ['GET /api/v1/friends/search', '/api/v1/friends/search'],
     ['POST /api/v1/friends/requests', '/api/v1/friends/requests'],
+    ['DELETE /api/v1/friends/requests/{requestId}', '/api/v1/friends/requests/:requestId'],
     ['POST /api/v1/friends/requests/{requestId}/respond', '/api/v1/friends/requests/:requestId/respond'],
     ['DELETE /api/v1/friends/{friendUserId}', '/api/v1/friends/:friendUserId'],
+    ['GET /api/v1/friends/groups', '/api/v1/friends/groups'],
+    ['POST /api/v1/friends/groups', '/api/v1/friends/groups'],
+    ['DELETE /api/v1/friends/groups/{groupId}', '/api/v1/friends/groups/:groupId'],
+    ['PATCH /api/v1/friends/groups/{groupId}', '/api/v1/friends/groups/:groupId'],
+    ['DELETE /api/v1/friends/groups/{groupId}/members/{memberUserId}', '/api/v1/friends/groups/:groupId/members/:memberUserId'],
+    ['GET /api/v1/friends/groups/{groupId}/messages', '/api/v1/friends/groups/:groupId/messages'],
+    ['POST /api/v1/friends/groups/{groupId}/messages', '/api/v1/friends/groups/:groupId/messages'],
+    ['POST /api/v1/friends/groups/{groupId}/messages/{messageId}/recall', '/api/v1/friends/groups/:groupId/messages/:messageId/recall'],
+    ['POST /api/v1/friends/groups/{groupId}/messages/photo', '/api/v1/friends/groups/:groupId/messages/photo'],
+    ['GET /api/v1/friends/groups/{groupId}/messages/{messageId}/photo', '/api/v1/friends/groups/:groupId/messages/:messageId/photo'],
     ['POST /api/v1/presence', '/api/v1/presence'],
     ['POST /api/v1/friends/messages', '/api/v1/friends/messages'],
+    ['DELETE /api/v1/friends/messages/{messageId}', '/api/v1/friends/messages/:messageId'],
+    ['POST /api/v1/friends/messages/{messageId}/recall', '/api/v1/friends/messages/:messageId/recall'],
+    ['POST /api/v1/friends/messages/photo', '/api/v1/friends/messages/photo'],
+    ['GET /api/v1/friends/messages/photo/{photoFileName}', '/api/v1/friends/messages/photo/:photoFileName'],
+    ['GET /api/v1/friends/messages/{messageId}/photo', '/api/v1/friends/messages/:messageId/photo'],
     ['GET /api/v1/friends/messages/inbox', '/api/v1/friends/messages/inbox'],
     ['POST /api/v1/friends/messages/{messageId}/consume', '/api/v1/friends/messages/:messageId/consume'],
     ['GET /api/v1/friends/calls/ice-servers', '/api/v1/friends/calls/ice-servers'],
@@ -205,9 +492,13 @@ test('health, OpenAPI document and implemented routes are available', async () =
     ['POST /api/v1/me/cape', '/api/v1/me/cape'],
     ['PUT /api/v1/me/cape', '/api/v1/me/cape'],
     ['DELETE /api/v1/me/cape', '/api/v1/me/cape'],
+    ['POST /api/v1/me/elytra', '/api/v1/me/elytra'],
+    ['PUT /api/v1/me/elytra', '/api/v1/me/elytra'],
+    ['DELETE /api/v1/me/elytra', '/api/v1/me/elytra'],
     ['GET /api/v1/profiles/{username}', '/api/v1/profiles/:username'],
     ['GET /api/v1/profiles/{username}/skin.png', '/api/v1/profiles/:username/skin.png'],
     ['GET /api/v1/profiles/{username}/cape.png', '/api/v1/profiles/:username/cape.png'],
+    ['GET /api/v1/profiles/{username}/elytra.png', '/api/v1/profiles/:username/elytra.png'],
     ['GET /updates/{filename}', '/updates/:filename'],
     ['POST /api/v1/admin/updates/{filename}', '/api/v1/admin/updates/:filename'],
   ]) {
@@ -227,6 +518,7 @@ test('supports friend requests, friend-only presence, one-time messages and call
   const alice = await createAccount('Alice');
   const bob = await createAccount('Bob');
   const outsider = await createAccount('Outsider');
+  const underscored = await createAccount('B_b');
   const aliceHeaders = bearer(alice.accessToken);
   const bobHeaders = bearer(bob.accessToken);
 
@@ -244,6 +536,453 @@ test('supports friend requests, friend-only presence, one-time messages and call
     payload: { username: 'NoSuchUser' },
   })).statusCode, 404);
 
+  const initialSuggestions = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/search',
+    headers: aliceHeaders,
+  });
+
+  async function verifyGroupConversations() {
+    const alice = await createAccount('GroupOwner');
+    const bob = await createAccount('GroupMember');
+    const charlie = await createAccount('GroupGuest');
+    const outsider = await createAccount('GroupOutsider');
+    const aliceHeaders = bearer(alice.accessToken);
+    const bobHeaders = bearer(bob.accessToken);
+    const charlieHeaders = bearer(charlie.accessToken);
+    const outsiderHeaders = bearer(outsider.accessToken);
+
+    for (const [senderHeaders, recipientHeaders, recipientName] of [
+      [aliceHeaders, bobHeaders, 'GroupMember'],
+      [aliceHeaders, charlieHeaders, 'GroupGuest'],
+    ]) {
+      const sentRequest = await app.inject({
+        method: 'POST',
+        url: '/api/v1/friends/requests',
+        headers: senderHeaders,
+        payload: { username: recipientName },
+      });
+      assert.equal(sentRequest.statusCode, 201, sentRequest.body);
+      const requestId = (await app.inject({
+        method: 'GET',
+        url: '/api/v1/friends',
+        headers: recipientHeaders,
+      })).json().incomingRequests[0].requestId;
+      assert.equal((await app.inject({
+        method: 'POST',
+        url: `/api/v1/friends/requests/${requestId}/respond`,
+        headers: recipientHeaders,
+        payload: { accept: true },
+      })).statusCode, 200);
+    }
+
+    const aliceFriends = (await app.inject({
+      method: 'GET',
+      url: '/api/v1/friends',
+      headers: aliceHeaders,
+    })).json().friends;
+    const bobId = aliceFriends.find(({ username }) => username === 'GroupMember').userId;
+    const charlieId = aliceFriends.find(({ username }) => username === 'GroupGuest').userId;
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/groups',
+      headers: aliceHeaders,
+      payload: { name: 'Weekend group', memberUserIds: [bobId, charlieId] },
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const groupId = created.json().groupId;
+    const groupCallSignal = await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/calls/signals',
+      headers: bobHeaders,
+      payload: {
+        recipientUserId: charlieId,
+        groupId,
+        callId: '123e4567-e89b-12d3-a456-426614174001',
+        type: 'offer',
+        sdp: 'v=0\r\n',
+      },
+    });
+    assert.equal(groupCallSignal.statusCode, 202, groupCallSignal.body);
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/calls/signals',
+      headers: bobHeaders,
+      payload: {
+        recipientUserId: app.skinDatabase.prepare('SELECT id FROM users WHERE username = ?').get('GroupOutsider').id,
+        groupId,
+        callId: '123e4567-e89b-12d3-a456-426614174002',
+        type: 'offer',
+        sdp: 'v=0\r\n',
+      },
+    })).statusCode, 404);
+    const groupSignals = await app.inject({
+      method: 'GET',
+      url: '/api/v1/friends/calls/signals',
+      headers: charlieHeaders,
+    });
+    assert.equal(groupSignals.json()[0].groupId, groupId);
+
+    const bobGroups = await app.inject({
+      method: 'GET',
+      url: '/api/v1/friends/groups',
+      headers: bobHeaders,
+    });
+    assert.deepEqual(bobGroups.json()[0].members.map(({ username }) => username), [
+      'GroupGuest', 'GroupMember', 'GroupOwner',
+    ]);
+    const ownerId = bobGroups.json()[0].members.find(({ username }) => username === 'GroupOwner').userId;
+    assert.equal(bobGroups.json()[0].createdByUserId, ownerId);
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages`,
+      headers: outsiderHeaders,
+      payload: { body: 'Not a member' },
+    })).statusCode, 404);
+
+    const firstMessage = await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages`,
+      headers: bobHeaders,
+      payload: { body: 'Hello group' },
+    });
+    assert.equal(firstMessage.statusCode, 201, firstMessage.body);
+    const secondMessage = await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages`,
+      headers: aliceHeaders,
+      payload: { body: 'Welcome' },
+    });
+    assert.equal(secondMessage.statusCode, 201, secondMessage.body);
+    const messages = await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${groupId}/messages`,
+      headers: charlieHeaders,
+    });
+    assert.deepEqual(messages.json().map(({ body }) => body), ['Hello group', 'Welcome']);
+    const recallFirstMessageUrl = `/api/v1/friends/groups/${groupId}/messages/${firstMessage.json().messageId}/recall`;
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: recallFirstMessageUrl,
+      headers: aliceHeaders,
+    })).statusCode, 404);
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: recallFirstMessageUrl,
+      headers: outsiderHeaders,
+    })).statusCode, 404);
+    assert.deepEqual((await app.inject({
+      method: 'POST',
+      url: recallFirstMessageUrl,
+      headers: bobHeaders,
+    })).json(), { recalled: true });
+    const afterRecall = await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${groupId}/messages`,
+      headers: charlieHeaders,
+    });
+    assert.deepEqual(afterRecall.json().map(({ body }) => body), ['Welcome']);
+
+    const groupPhotoUpload = multipartGroupPhoto(await createPng());
+    Object.assign(groupPhotoUpload.headers, bobHeaders);
+    const uploadedPhoto = await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages/photo`,
+      ...groupPhotoUpload,
+    });
+    assert.equal(uploadedPhoto.statusCode, 201, uploadedPhoto.body);
+    assert.equal(uploadedPhoto.json().kind, 'photo');
+    const photoMessageId = uploadedPhoto.json().messageId;
+    const photoMessages = await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${groupId}/messages`,
+      headers: charlieHeaders,
+    });
+    assert.equal(photoMessages.json().at(-1).kind, 'photo');
+    const memberPhoto = await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${groupId}/messages/${photoMessageId}/photo`,
+      headers: charlieHeaders,
+    });
+    assert.equal(memberPhoto.statusCode, 200);
+    assert.equal(memberPhoto.headers['content-type'], 'image/png');
+    assert.equal((await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${groupId}/messages/${photoMessageId}/photo`,
+      headers: outsiderHeaders,
+    })).statusCode, 404);
+    const outsiderPhotoUpload = multipartGroupPhoto(await createPng());
+    Object.assign(outsiderPhotoUpload.headers, outsiderHeaders);
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages/photo`,
+      ...outsiderPhotoUpload,
+    })).statusCode, 404);
+    const groupPhotoFileName = app.skinDatabase.prepare(`
+      SELECT photo_file_name AS photoFileName FROM friend_group_messages WHERE id = ?
+    `).get(photoMessageId).photoFileName;
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages/${photoMessageId}/recall`,
+      headers: aliceHeaders,
+    })).statusCode, 404);
+    app.skinDatabase.prepare('UPDATE friend_group_messages SET created_at = ? WHERE id = ?')
+      .run(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString(), photoMessageId);
+    const afterPhotoExpiry = await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${groupId}/messages`,
+      headers: charlieHeaders,
+    });
+    assert.equal(afterPhotoExpiry.json().some((message) => message.messageId === photoMessageId), false);
+    assert.equal((await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${groupId}/messages/${photoMessageId}/photo`,
+      headers: charlieHeaders,
+    })).statusCode, 404);
+    await assert.rejects(readFile(path.join(dataDir, 'photos', groupPhotoFileName)), { code: 'ENOENT' });
+
+    const recallPhotoUpload = multipartGroupPhoto(await createPng());
+    Object.assign(recallPhotoUpload.headers, bobHeaders);
+    const recallPhoto = await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages/photo`,
+      ...recallPhotoUpload,
+    });
+    assert.equal(recallPhoto.statusCode, 201, recallPhoto.body);
+    const recallPhotoId = recallPhoto.json().messageId;
+    const recallPhotoFileName = app.skinDatabase.prepare(`
+      SELECT photo_file_name AS photoFileName FROM friend_group_messages WHERE id = ?
+    `).get(recallPhotoId).photoFileName;
+    assert.deepEqual((await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${groupId}/messages/${recallPhotoId}/recall`,
+      headers: bobHeaders,
+    })).json(), { recalled: true });
+    await assert.rejects(readFile(path.join(dataDir, 'photos', recallPhotoFileName)), { code: 'ENOENT' });
+
+    const directMessage = await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/messages',
+      headers: aliceHeaders,
+      payload: { recipientUserId: bobId, body: 'Recall me' },
+    });
+    assert.equal(directMessage.statusCode, 201);
+    assert.equal((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/messages/${directMessage.json().messageId}`,
+      headers: bobHeaders,
+    })).statusCode, 404);
+    assert.deepEqual((await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/messages/${directMessage.json().messageId}/recall`,
+      headers: aliceHeaders,
+    })).json(), { recalled: true });
+
+    const legacyRecallMessage = await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/messages',
+      headers: aliceHeaders,
+      payload: { recipientUserId: bobId, body: 'Legacy recall route' },
+    });
+    assert.deepEqual((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/messages/${legacyRecallMessage.json().messageId}`,
+      headers: aliceHeaders,
+    })).json(), { recalled: true });
+
+    assert.equal((await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/friends/groups/${groupId}`,
+      headers: bobHeaders,
+      payload: { name: 'Unauthorized rename' },
+    })).statusCode, 403);
+    assert.deepEqual((await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/friends/groups/${groupId}`,
+      headers: aliceHeaders,
+      payload: { name: 'Renamed group' },
+    })).json(), { groupId, name: 'Renamed group' });
+    assert.equal((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/groups/${groupId}/members/${charlieId}`,
+      headers: bobHeaders,
+    })).statusCode, 403);
+
+    assert.deepEqual((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/groups/${groupId}/members/${ownerId}`,
+      headers: aliceHeaders,
+    })).json(), { removed: true, groupDeleted: false });
+    const transferredGroup = (await app.inject({
+      method: 'GET',
+      url: '/api/v1/friends/groups',
+      headers: bobHeaders,
+    })).json()[0];
+    assert.ok([bobId, charlieId].includes(transferredGroup.ownerUserId));
+    const newOwnerId = transferredGroup.ownerUserId;
+    const newOwnerHeaders = newOwnerId === bobId ? bobHeaders : charlieHeaders;
+    assert.equal((await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/friends/groups/${groupId}`,
+      headers: newOwnerHeaders,
+      payload: { name: 'Unauthorized after handoff' },
+    })).statusCode, 403);
+    const remainingMemberId = newOwnerId === bobId ? charlieId : bobId;
+    assert.equal((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/groups/${groupId}/members/${remainingMemberId}`,
+      headers: newOwnerHeaders,
+    })).json().groupDeleted, false);
+    assert.deepEqual((await app.inject({
+      method: 'GET',
+      url: '/api/v1/friends/groups',
+      headers: remainingMemberId === bobId ? bobHeaders : charlieHeaders,
+    })).json(), []);
+    assert.deepEqual((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/groups/${groupId}/members/${newOwnerId}`,
+      headers: newOwnerHeaders,
+    })).json(), { removed: true, groupDeleted: true });
+
+    const removableGroup = await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/groups',
+      headers: aliceHeaders,
+      payload: { name: 'Group to delete', memberUserIds: [bobId] },
+    });
+    const removableGroupId = removableGroup.json().groupId;
+    const removablePhotoUpload = multipartGroupPhoto(await createPng());
+    Object.assign(removablePhotoUpload.headers, aliceHeaders);
+    const removablePhoto = await app.inject({
+      method: 'POST',
+      url: `/api/v1/friends/groups/${removableGroupId}/messages/photo`,
+      ...removablePhotoUpload,
+    });
+    const removablePhotoFileName = app.skinDatabase.prepare(`
+      SELECT photo_file_name AS photoFileName FROM friend_group_messages WHERE id = ?
+    `).get(removablePhoto.json().messageId).photoFileName;
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/calls/signals',
+      headers: aliceHeaders,
+      payload: {
+        recipientUserId: bobId,
+        groupId: removableGroupId,
+        callId: '123e4567-e89b-12d3-a456-426614174003',
+        type: 'offer',
+        sdp: 'v=0\r\n',
+      },
+    })).statusCode, 202);
+    assert.equal((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/groups/${removableGroupId}`,
+      headers: bobHeaders,
+    })).statusCode, 403);
+    assert.equal((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/groups/${removableGroupId}`,
+      headers: outsiderHeaders,
+    })).statusCode, 404);
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/calls/signals',
+      headers: aliceHeaders,
+      payload: {
+        recipientUserId: bobId,
+        groupId: removableGroupId,
+        callId: '123e4567-e89b-12d3-a456-426614174003',
+        type: 'hangup',
+        sdp: '',
+      },
+    })).statusCode, 202);
+    assert.deepEqual((await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/friends/groups/${removableGroupId}`,
+      headers: aliceHeaders,
+    })).json(), { deleted: true });
+    assert.deepEqual(app.skinDatabase.prepare('SELECT type FROM call_signals WHERE group_id = ?')
+      .all(removableGroupId).map(({ type }) => type), ['hangup']);
+    app.skinDatabase.prepare('DELETE FROM call_signals WHERE group_id = ?').run(removableGroupId);
+    for (const type of ['hangup', 'reject']) {
+      const staleCleanup = await app.inject({
+        method: 'POST',
+        url: '/api/v1/friends/calls/signals',
+        headers: aliceHeaders,
+        payload: {
+          recipientUserId: bobId,
+          groupId: removableGroupId,
+          callId: '123e4567-e89b-12d3-a456-426614174003',
+          type,
+          sdp: '',
+        },
+      });
+      assert.equal(staleCleanup.statusCode, 200, staleCleanup.body);
+      assert.deepEqual(staleCleanup.json(), { sent: false });
+    }
+    assert.equal((await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/calls/signals',
+      headers: aliceHeaders,
+      payload: {
+        recipientUserId: bobId,
+        groupId: removableGroupId,
+        callId: '123e4567-e89b-12d3-a456-426614174003',
+        type: 'offer',
+        sdp: 'v=0\r\n',
+      },
+    })).statusCode, 404);
+    assert.equal((await app.inject({
+      method: 'GET',
+      url: `/api/v1/friends/groups/${removableGroupId}/messages`,
+      headers: bobHeaders,
+    })).statusCode, 404);
+    assert.equal(app.skinDatabase.prepare('SELECT COUNT(*) AS count FROM call_signals WHERE group_id = ?')
+      .get(removableGroupId).count, 0);
+    await assert.rejects(readFile(path.join(dataDir, 'photos', removablePhotoFileName)), { code: 'ENOENT' });
+  }
+  assert.equal(initialSuggestions.statusCode, 200);
+  assert.deepEqual(initialSuggestions.json().map(({ username }) => username), ['B_b', 'Bob', 'Outsider']);
+  const prefixSuggestions = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/search?q=bo',
+    headers: aliceHeaders,
+  });
+  assert.deepEqual(prefixSuggestions.json().map(({ username }) => username), ['Bob']);
+  const underscoreSuggestions = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/search?q=b_',
+    headers: aliceHeaders,
+  });
+  assert.deepEqual(underscoreSuggestions.json().map(({ username }) => username), ['B_b']);
+
+  const cancellable = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/requests',
+    headers: aliceHeaders,
+    payload: { username: 'B_b' },
+  });
+  assert.equal(cancellable.statusCode, 201);
+  const cancellableId = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends',
+    headers: aliceHeaders,
+  })).json().outgoingRequests[0].requestId;
+  assert.equal((await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/friends/requests/${cancellableId}`,
+    headers: bearer(underscored.accessToken),
+  })).statusCode, 404);
+  assert.deepEqual((await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/friends/requests/${cancellableId}`,
+    headers: aliceHeaders,
+  })).json(), { cancelled: true });
+  assert.equal((await app.inject({
+    method: 'DELETE',
+    url: `/api/v1/friends/requests/${cancellableId}`,
+    headers: aliceHeaders,
+  })).statusCode, 404);
+
   const request = await app.inject({
     method: 'POST',
     url: '/api/v1/friends/requests',
@@ -251,6 +990,12 @@ test('supports friend requests, friend-only presence, one-time messages and call
     payload: { username: 'bOB' },
   });
   assert.equal(request.statusCode, 201, request.body);
+  const pendingSuggestions = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/search?q=bo',
+    headers: aliceHeaders,
+  });
+  assert.deepEqual(pendingSuggestions.json(), []);
   const requestId = (await app.inject({
     method: 'GET',
     url: '/api/v1/friends',
@@ -269,6 +1014,12 @@ test('supports friend requests, friend-only presence, one-time messages and call
     payload: { accept: true },
   });
   assert.equal(accepted.statusCode, 200, accepted.body);
+  const acceptedFriendSuggestions = await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends/search?q=bo',
+    headers: aliceHeaders,
+  });
+  assert.deepEqual(acceptedFriendSuggestions.json(), []);
 
   const presence = await app.inject({
     method: 'POST',
@@ -278,9 +1029,16 @@ test('supports friend requests, friend-only presence, one-time messages and call
   });
   assert.equal(presence.statusCode, 200, presence.body);
   assert.deepEqual(presence.json(), { updated: true });
+  assert.equal((await app.inject({
+    method: 'PUT',
+    url: '/api/v1/me/minecraft-profile',
+    headers: bobHeaders,
+    payload: { username: 'MinecraftBob' },
+  })).statusCode, 200);
   const friendList = await app.inject({ method: 'GET', url: '/api/v1/friends', headers: aliceHeaders });
   const bobFriend = friendList.json().friends[0];
   assert.equal(bobFriend.username, 'Bob');
+  assert.equal(bobFriend.minecraftUsername, 'MinecraftBob');
   assert.equal(bobFriend.online, true);
   assert.equal(bobFriend.inGame, true);
 
@@ -302,6 +1060,7 @@ test('supports friend requests, friend-only presence, one-time messages and call
   const inbox = await app.inject({ method: 'GET', url: '/api/v1/friends/messages/inbox', headers: bobHeaders });
   assert.equal(inbox.statusCode, 200, inbox.body);
   assert.equal(inbox.json().length, 1);
+  assert.equal(inbox.json()[0].kind, 'text');
   assert.equal(Object.prototype.hasOwnProperty.call(inbox.json()[0], 'body'), false);
   const consumed = await app.inject({
     method: 'POST',
@@ -314,7 +1073,7 @@ test('supports friend requests, friend-only presence, one-time messages and call
     method: 'POST',
     url: `/api/v1/friends/messages/${message.json().messageId}/consume`,
     headers: bobHeaders,
-  })).statusCode, 404);
+  })).statusCode, 200);
 
   const iceServers = await app.inject({
     method: 'GET',
@@ -332,6 +1091,24 @@ test('supports friend requests, friend-only presence, one-time messages and call
     payload: { recipientUserId: bobFriend.userId, callId, type: 'offer', sdp: 'v=0\r\n' },
   });
   assert.equal(offer.statusCode, 202, offer.body);
+  const candidate = {
+    candidate: 'candidate:1 1 UDP 2122252543 192.0.2.1 5000 typ host',
+    sdpMid: '0',
+    sdpMLineIndex: 0,
+    usernameFragment: 'test',
+  };
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/calls/signals',
+    headers: aliceHeaders,
+    payload: { recipientUserId: bobFriend.userId, callId, type: 'candidate', sdp: JSON.stringify(candidate) },
+  })).statusCode, 202);
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/calls/signals',
+    headers: aliceHeaders,
+    payload: { recipientUserId: bobFriend.userId, callId, type: 'candidate', sdp: '{invalid' },
+  })).statusCode, 400);
   const bobSignals = await app.inject({
     method: 'GET',
     url: '/api/v1/friends/calls/signals',
@@ -340,6 +1117,8 @@ test('supports friend requests, friend-only presence, one-time messages and call
   assert.equal(bobSignals.statusCode, 200, bobSignals.body);
   assert.equal(bobSignals.json()[0].type, 'offer');
   assert.equal(bobSignals.json()[0].sdp, 'v=0\r\n');
+  assert.equal(bobSignals.json()[1].type, 'candidate');
+  assert.deepEqual(JSON.parse(bobSignals.json()[1].sdp), candidate);
   assert.deepEqual((await app.inject({
     method: 'GET',
     url: '/api/v1/friends/calls/signals',
@@ -390,6 +1169,7 @@ test('supports friend requests, friend-only presence, one-time messages and call
     headers: aliceHeaders,
     payload: { recipientUserId: bobFriend.userId, body: 'After removal' },
   })).statusCode, 404);
+  await verifyGroupConversations();
 });
 
 test('links Minecraft names to Westron profiles for public skin and cape lookup', async () => {
@@ -578,6 +1358,29 @@ test('refresh tokens rotate once and replay revokes the session', async () => {
   assert.equal((await app.inject({ method: 'GET', url: '/api/v1/me', headers: bearer(refresh.json().accessToken) })).statusCode, 401);
 });
 
+test('access and refresh tokens expire at the session deadline', async () => {
+  const account = await createAccount('SessionExpiry');
+  const refreshRow = app.skinDatabase.prepare('SELECT session_id FROM refresh_tokens WHERE token_hash = ?')
+    .get(hashToken(account.refreshToken));
+  assert.ok(refreshRow);
+  app.skinDatabase.prepare('UPDATE sessions SET refresh_expires_at = ? WHERE id = ?')
+    .run(Date.now() - 1, refreshRow.session_id);
+
+  const access = await app.inject({
+    method: 'GET',
+    url: '/api/v1/me',
+    headers: bearer(account.accessToken),
+  });
+  assert.equal(access.statusCode, 401);
+
+  const refresh = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/refresh',
+    payload: { refreshToken: account.refreshToken },
+  });
+  assert.equal(refresh.statusCode, 401);
+});
+
 test('password reset is one-time and revokes all existing sessions', async () => {
   const account = await createAccount('ResetUser');
   const request = await app.inject({
@@ -654,6 +1457,7 @@ test('skin upload and public profile flow only works for verified accounts', asy
   const publicProfile = await app.inject({ method: 'GET', url: '/api/v1/profiles/skinowner' });
   assert.equal(publicProfile.statusCode, 200);
   assert.equal(publicProfile.json().username, 'SkinOwner');
+  assert.equal(publicProfile.headers['access-control-allow-origin'], '*');
   const pngResponse = await app.inject({ method: 'GET', url: '/api/v1/profiles/SkinOwner/skin.png' });
   assert.equal(pngResponse.statusCode, 200);
   assert.equal(pngResponse.headers['content-type'], 'image/png');
@@ -991,6 +1795,7 @@ test('cape upload, public profile and legacy texture compatibility flow', async 
   });
   assert.equal(myProfile.statusCode, 200, myProfile.body);
   assert.equal(myProfile.json().cape.url, upload.json().cape.url);
+  assert.equal(myProfile.json().elytra, null);
 
   const profile = await app.inject({ method: 'GET', url: '/api/v1/profiles/capeplayer' });
   assert.equal(profile.statusCode, 200);
@@ -1011,4 +1816,55 @@ test('cape upload, public profile and legacy texture compatibility flow', async 
     headers: bearer(account.accessToken),
   });
   assert.equal(del.statusCode, 204);
+});
+
+test('elytra upload, replacement, public texture and removal flow', async () => {
+  const account = await createAccount('ElytraPlayer');
+  const elytraPng = await createPng(64, 32);
+  const elytraReq = multipartElytra(elytraPng);
+  elytraReq.headers.authorization = `Bearer ${account.accessToken}`;
+  const upload = await app.inject({
+    method: 'POST',
+    url: '/api/v1/me/elytra',
+    ...elytraReq,
+  });
+  assert.equal(upload.statusCode, 201, upload.body);
+  assert.equal(upload.json().elytra.url, 'https://westronskin.example.test/api/v1/profiles/ElytraPlayer/elytra.png');
+  assert.equal(upload.json().cape, null);
+
+  const myProfile = await app.inject({
+    method: 'GET',
+    url: '/api/v1/me',
+    headers: bearer(account.accessToken),
+  });
+  assert.equal(myProfile.statusCode, 200, myProfile.body);
+  assert.equal(myProfile.json().elytra.url, upload.json().elytra.url);
+
+  const profile = await app.inject({ method: 'GET', url: '/api/v1/profiles/elytraplayer' });
+  assert.equal(profile.statusCode, 200, profile.body);
+  assert.equal(profile.json().elytra.url, upload.json().elytra.url);
+
+  const elytraFile = await app.inject({ method: 'GET', url: '/api/v1/profiles/ElytraPlayer/elytra.png' });
+  assert.equal(elytraFile.statusCode, 200, elytraFile.body);
+  assert.equal(elytraFile.headers['access-control-allow-origin'], '*');
+  assert.deepEqual(elytraFile.rawPayload, elytraPng);
+
+  const replacementReq = multipartElytra(elytraPng);
+  replacementReq.headers.authorization = `Bearer ${account.accessToken}`;
+  const replacement = await app.inject({
+    method: 'PUT',
+    url: '/api/v1/me/elytra',
+    ...replacementReq,
+  });
+  assert.equal(replacement.statusCode, 200, replacement.body);
+
+  const del = await app.inject({
+    method: 'DELETE',
+    url: '/api/v1/me/elytra',
+    headers: bearer(account.accessToken),
+  });
+  assert.equal(del.statusCode, 204);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/profiles/ElytraPlayer/elytra.png' })).statusCode, 404);
+  const deletedProfile = await app.inject({ method: 'GET', url: '/api/v1/profiles/ElytraPlayer' });
+  assert.equal(deletedProfile.json().elytra, null);
 });

@@ -18,6 +18,12 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+export function normalizeSmtpPassword(host, password) {
+  return host.trim().toLowerCase() === 'smtp.gmail.com'
+    ? password.replace(/\s/g, '')
+    : password;
+}
+
 export function createMailer(env = process.env) {
   const required = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_FROM'];
   const missing = required.filter((key) => !env[key]);
@@ -36,7 +42,7 @@ export function createMailer(env = process.env) {
     host: env.SMTP_HOST,
     port,
     secure: env.SMTP_SECURE === 'true' || port === 465,
-    auth: { user: env.SMTP_USER, pass: env.SMTP_PASSWORD },
+    auth: { user: env.SMTP_USER, pass: normalizeSmtpPassword(env.SMTP_HOST, env.SMTP_PASSWORD) },
     logger: false,
     debug: false,
     tls: { rejectUnauthorized: true },

@@ -174,8 +174,10 @@ interface WestronAccount {
 interface WestronFriend {
   userId: string;
   username: string;
+  minecraftUsername?: string | null;
   online: boolean;
   inGame: boolean;
+  serverName?: string | null;
 }
 
 interface WestronFriendRequest {
@@ -191,11 +193,30 @@ interface WestronFriendList {
   outgoingRequests: WestronFriendRequest[];
 }
 
+interface WestronFriendGroup {
+  id: string;
+  name: string;
+  ownerUserId: string;
+  createdByUserId: string;
+  createdAt: string;
+  members: { userId: string; username: string; minecraftUsername?: string | null }[];
+}
+
+interface WestronFriendGroupMessage {
+  messageId: string;
+  senderUserId: string;
+  senderUsername: string;
+  body: string;
+  kind: 'text' | 'photo';
+  createdAt: string;
+}
+
 interface WestronEphemeralMessage {
   messageId: string;
   senderUserId: string;
   senderUsername: string;
   createdAt: string;
+  kind: 'text' | 'photo';
 }
 
 interface WestronConsumedEphemeralMessage {
@@ -205,18 +226,31 @@ interface WestronConsumedEphemeralMessage {
   createdAt: string;
 }
 
+interface WestronConversationMessage {
+  messageId: string;
+  senderUserId: string;
+  senderUsername: string;
+  recipientUserId: string;
+  body: string;
+  kind: 'text' | 'photo';
+  photoUrl?: string | null;
+  photoViewedByMe?: boolean;
+  createdAt: string;
+}
+
 interface WestronIceServer {
   urls: string | string[];
   username?: string;
   credential?: string;
 }
 
-type WestronCallSignalType = 'offer' | 'answer' | 'hangup' | 'reject';
+type WestronCallSignalType = 'offer' | 'answer' | 'candidate' | 'hangup' | 'reject';
 
 interface WestronCallSignal {
   signalId: string;
   fromUserId: string;
   fromUsername: string;
+  groupId?: string | null;
   callId: string;
   type: WestronCallSignalType;
   sdp: string;
@@ -230,6 +264,10 @@ interface WestronProfile {
     updatedAt: string;
   };
   cape: null | {
+    url: string;
+    updatedAt: string;
+  };
+  elytra: null | {
     url: string;
     updatedAt: string;
   };
@@ -276,25 +314,90 @@ interface Window {
     verifyWestronEmail: (input: { email: string; token: string }) => Promise<string>;
     resendWestronVerification: (input: { email: string }) => Promise<string>;
     requestPasswordReset: (input: { email: string }) => Promise<string>;
-    requestWestronPasswordReset: (input: { email: string }) => Promise<string>;
-    resetWestronPassword: (input: { email: string; token: string; newPassword: string }) => Promise<string>;
+    resetPassword: (input: { email: string; token: string; newPassword: string }) => Promise<string>;
     getWestronProfile: () => Promise<WestronProfile | null>;
     uploadWestronSkin: (model: 'classic' | 'slim') => Promise<{ cancelled: boolean; profile?: WestronProfile }>;
     deleteWestronSkin: () => Promise<WestronProfile | null>;
     uploadWestronCape: () => Promise<{ cancelled: boolean; profile?: WestronProfile }>;
     deleteWestronCape: () => Promise<WestronProfile | null>;
+    uploadWestronElytra: () => Promise<{ cancelled: boolean; profile?: WestronProfile }>;
+    deleteWestronElytra: () => Promise<WestronProfile | null>;
     logoutWestronAccount: () => Promise<string>;
     listWestronFriends: () => Promise<WestronFriendList>;
+    getWestronFriendSkinUrl: (input: { username: string; minecraftUsername?: string | null }) => Promise<string | null>;
+    searchWestronFriends: (input: { query: string }) => Promise<{ userId: string; username: string }[]>;
+    listWestronGroups: () => Promise<WestronFriendGroup[]>;
+    createWestronGroup: (input: { name: string; memberUserIds: string[] }) => Promise<{ groupId: string; name: string }>;
+    renameWestronGroup: (input: { groupId: string; name: string }) => Promise<{ groupId: string; name: string }>;
+    deleteWestronGroup: (input: { groupId: string }) => Promise<{ deleted: true }>;
+    removeWestronGroupMember: (input: { groupId: string; memberUserId: string }) => Promise<{ removed: true; groupDeleted: boolean }>;
+    listWestronGroupConversation: (input: { groupId: string }) => Promise<WestronFriendGroupMessage[]>;
+    sendWestronGroupMessage: (input: { groupId: string; body: string }) => Promise<{ messageId: string; kind: 'text' }>;
+    getWestronGroupMessagePhoto: (input: { groupId: string; messageId: string }) => Promise<string>;
+    chooseAndSendWestronGroupPhoto: (input: { groupId: string }) => Promise<
+      { cancelled: true } | { cancelled: false; messageId: string }
+    >;
     sendWestronFriendRequest: (input: { username: string }) => Promise<{ message: string }>;
     respondWestronFriendRequest: (input: { requestId: string; accept: boolean }) => Promise<{ message: string }>;
+    cancelWestronFriendRequest: (input: { requestId: string }) => Promise<{ cancelled: true }>;
     removeWestronFriend: (input: { userId: string }) => Promise<{ message: string }>;
     updateWestronPresence: (input: { inGame: boolean }) => Promise<{ updated: true }>;
     sendWestronEphemeralMessage: (input: { recipientUserId: string; body: string }) => Promise<{ messageId: string }>;
     listWestronEphemeralMessages: () => Promise<WestronEphemeralMessage[]>;
     consumeWestronEphemeralMessage: (input: { messageId: string }) => Promise<WestronConsumedEphemeralMessage>;
+    listWestronConversation: (input: { friendUserId: string }) => Promise<WestronConversationMessage[]>;
+    getWestronMessagePhoto: (input: { messageId: string }) => Promise<string>;
+    recallWestronMessage: (input: { messageId: string; groupId?: string }) => Promise<{ recalled: true }>;
+    chooseAndSendWestronPhoto: (input: { recipientUserId: string }) => Promise<
+      { cancelled: true } | { cancelled: false; messageId: string }
+    >;
+    updateWestronVoiceOverlay: (input: {
+      enabled: boolean;
+      participants: string[];
+      speaking: string[];
+      call?: {
+        incoming: boolean;
+        self: string;
+        selfSkinUrl?: string;
+        selfSpeaking: boolean;
+        friend: string;
+        status: string;
+        avatarShape?: 'round' | 'square';
+        microphoneMuted: boolean;
+        remoteAudioMuted: boolean;
+        friendMicrophoneMuted?: boolean;
+        friendSpeakerMuted?: boolean;
+        canAddParticipant?: boolean;
+        friendSkinUrl?: string;
+        groupParticipants?: {
+          username: string;
+          skinUrl: string;
+          connected: boolean;
+          speaking: boolean;
+          microphoneMuted?: boolean;
+          speakerMuted?: boolean;
+        }[];
+        labels: Record<string, string>;
+      };
+    }) => Promise<void>;
+    showWestronVoiceCallWindow: () => Promise<void>;
+    onVoiceCallAction: (callback: (
+      action: 'accept' | 'reject' | 'end' | 'toggle-microphone' | 'toggle-speaker' | 'add-participant',
+    ) => void) => () => void;
+    onVoiceCallWindowState: (callback: (state: {
+      open: boolean;
+      visible: boolean;
+      minimized: boolean;
+      opening: boolean;
+    }) => void) => () => void;
+    playWestronNotification: (kind: 'call' | 'message') => Promise<void>;
+    showWestronNotification: (input: { sender: string; message: string; notificationId?: string }) => Promise<{ shown: boolean }>;
+    onOpenFriends: (callback: (notificationId?: string) => void) => () => void;
+    getMinecraftSkinUrl: (input: { username: string }) => Promise<string | null>;
     getWestronVoiceCallIceServers: () => Promise<{ iceServers: WestronIceServer[] }>;
     sendWestronVoiceCallSignal: (input: {
       recipientUserId: string;
+      groupId?: string;
       callId: string;
       type: WestronCallSignalType;
       sdp: string;
@@ -343,6 +446,9 @@ interface Window {
     listScreenshotsPage: (offset: number, limit: number) => Promise<GameScreenshotPage>;
     readScreenshot: (fileName: string) => Promise<string>;
     deleteScreenshot: (fileName: string) => Promise<void>;
+    downloadScreenshot: (fileName: string) => Promise<{ cancelled: boolean; path?: string }>;
+    shareScreenshotToFriends: (input: { fileName: string; recipientUserIds: string[] }) => Promise<{ sent: true }>;
+    shareScreenshotToGroups: (input: { fileName: string; groupIds: string[] }) => Promise<{ sent: true }>;
     openScreenshotsFolder: () => Promise<void>;
   };
 }

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#29223f"/>
+      <stop offset=".52" stop-color="#171522"/>
+      <stop offset="1" stop-color="#0c0e14"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#e3d9ff"/>
+      <stop offset=".48" stop-color="#b49fff"/>
+      <stop offset="1" stop-color="#8170c9"/>
+    </linearGradient>
+    <linearGradient id="left" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#a28de8"/>
+      <stop offset="1" stop-color="#584a91"/>
+    </linearGradient>
+    <linearGradient id="right" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#7665b6"/>
+      <stop offset="1" stop-color="#39304f"/>
+    </linearGradient>
+    <radialGradient id="halo">
+      <stop stop-color="#b5a1ff" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#8c74e5" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="20" y="20" width="472" height="472" rx="112" fill="url(#background)" stroke="#c5b5ff" stroke-opacity=".24" stroke-width="4"/>
+  <circle cx="256" cy="248" r="178" fill="url(#halo)"/>
+  <circle cx="256" cy="248" r="148" fill="none" stroke="#c6b7ff" stroke-opacity=".19" stroke-width="3"/>
+  <circle cx="256" cy="248" r="121" fill="none" stroke="#c6b7ff" stroke-opacity=".13" stroke-width="2"/>
+  <g stroke="#f0eaff" stroke-opacity=".72" stroke-width="5" stroke-linejoin="round">
+    <path d="M256 104 390 180 256 256 122 180Z" fill="url(#top)"/>
+    <path d="M122 180 256 256 256 408 122 332Z" fill="url(#left)"/>
+    <path d="M390 180 256 256 256 408 390 332Z" fill="url(#right)"/>
+    <path d="M256 104v152M122 180l134 76 134-76M256 256v152" fill="none" stroke-opacity=".34" stroke-width="4"/>
+  </g>
+  <path d="M86 429h340" stroke="#b9a7ff" stroke-opacity=".24" stroke-width="2"/>
+</svg>

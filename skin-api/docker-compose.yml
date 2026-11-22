@@ -13,7 +13,7 @@ services:
       DATABASE_PATH: /data/db/skin-api.sqlite
       SKINS_DIR: /data/skins
       UPDATES_DIR: /data/updates
-      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://westronskin.sytes.net}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://westronclient.myvnc.com}
       TRUST_PROXY: ${TRUST_PROXY:-}
     volumes:
       - skin-api-data:/data

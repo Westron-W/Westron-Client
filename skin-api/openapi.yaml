@@ -6,7 +6,7 @@ info:
     Separate Westron account and skin service. Microsoft authentication and
     Minecraft game sessions remain independent.
 servers:
-  - url: https://westronskin.sytes.net
+  - url: https://westronclient.myvnc.com
     description: HTTPS endpoint served through Nginx Proxy Manager.
 tags:
   - name: system
@@ -15,6 +15,7 @@ tags:
   - name: profiles
   - name: skins
   - name: capes
+  - name: elytras
   - name: updates
   - name: friends
   - name: presence
@@ -270,6 +271,36 @@ paths:
         "403": { $ref: "#/components/responses/Unverified" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/search:
+    get:
+      operationId: searchFriends
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: q
+          required: false
+          schema: { type: string, maxLength: 16 }
+          description: Username prefix; an empty value returns up to eight eligible users.
+      responses:
+        "200":
+          description: Verified users matching the prefix who are not already friends or pending requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 8
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [userId, username]
+                  properties:
+                    userId: { type: string }
+                    username: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
   /api/v1/friends/requests:
     post:
       operationId: sendFriendRequest
@@ -322,6 +353,32 @@ paths:
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/requests/{requestId}:
+    delete:
+      operationId: cancelFriendRequest
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: string, minLength: 36, maxLength: 36 }
+      responses:
+        "200":
+          description: Pending outgoing friend request cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [cancelled]
+                properties:
+                  cancelled: { type: boolean, const: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
   /api/v1/friends/{friendUserId}:
     delete:
       operationId: removeFriend
@@ -338,6 +395,314 @@ paths:
         "403": { $ref: "#/components/responses/Unverified" }
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/groups:
+    get:
+      operationId: listFriendGroups
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Groups the authenticated user belongs to.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, name, ownerUserId, createdByUserId, createdAt, members]
+                  properties:
+                    id: { type: string, format: uuid }
+                    name: { type: string, minLength: 1, maxLength: 32 }
+                    ownerUserId: { type: string, maxLength: 64 }
+                    createdByUserId: { type: string, maxLength: 64 }
+                    createdAt: { type: string, format: date-time }
+                    members:
+                      type: array
+                      items:
+                        type: object
+                        required: [userId, username]
+                        properties:
+                          userId: { type: string, maxLength: 64 }
+                          username: { type: string }
+                          minecraftUsername: { type: string, nullable: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        default: { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: createFriendGroup
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, memberUserIds]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 32 }
+                memberUserIds:
+                  type: array
+                  maxItems: 16
+                  items: { type: string, maxLength: 64 }
+      responses:
+        "201":
+          description: Group created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groupId, name]
+                properties:
+                  groupId: { type: string, format: uuid }
+                  name: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/groups/{groupId}:
+    delete:
+      operationId: deleteFriendGroup
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "200":
+          description: The group, its messages, photos, and pending call signals were deleted by its owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { const: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+    patch:
+      operationId: renameFriendGroup
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 32 }
+      responses:
+        "200":
+          description: Group name updated by its owner.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [groupId, name]
+                properties:
+                  groupId: { type: string }
+                  name: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/groups/{groupId}/members/{memberUserId}:
+    delete:
+      operationId: removeFriendGroupMember
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: memberUserId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "200":
+          description: Member removed or self-removal processed; ownership is transferred when needed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removed, groupDeleted]
+                properties:
+                  removed: { const: true }
+                  groupDeleted: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/groups/{groupId}/messages:
+    get:
+      operationId: listFriendGroupMessages
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        "200":
+          description: The latest 200 messages in chronological order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [messageId, senderUserId, senderUsername, body, kind, createdAt]
+                  properties:
+                    messageId: { type: string, format: uuid }
+                    senderUserId: { type: string, maxLength: 64 }
+                    senderUsername: { type: string }
+                    body: { type: string }
+                    kind: { type: string, enum: [text, photo] }
+                    createdAt: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: sendFriendGroupMessage
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "201":
+          description: Group message created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messageId]
+                properties:
+                  messageId: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/groups/{groupId}/messages/{messageId}/recall:
+    post:
+      operationId: recallFriendGroupMessage
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The caller's group message was removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recalled]
+                properties:
+                  recalled: { const: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/groups/{groupId}/messages/photo:
+    post:
+      operationId: sendFriendGroupPhoto
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo]
+              properties:
+                photo: { type: string, format: binary }
+      responses:
+        "201":
+          description: Photo message created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messageId, kind]
+                properties:
+                  messageId: { type: string, format: uuid }
+                  kind: { const: photo }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/groups/{groupId}/messages/{messageId}/photo:
+    get:
+      operationId: getFriendGroupPhoto
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 64 }
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Group photo available to group members.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
         default: { $ref: "#/components/responses/InternalError" }
   /api/v1/presence:
     post:
@@ -400,6 +765,83 @@ paths:
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages/photo:
+    post:
+      operationId: sendFriendPhoto
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [recipientUserId, photo]
+              properties:
+                recipientUserId: { type: string, minLength: 1, maxLength: 64 }
+                photo:
+                  type: string
+                  format: binary
+                  description: Image uploads may be up to 10 MiB and are optimized to a maximum of 5 MiB for delivery.
+      responses:
+        "201":
+          description: One-time photo message created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [messageId, photoUrl]
+                properties:
+                  messageId: { type: string, format: uuid }
+                  photoUrl: { type: string, format: uri }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages/photo/{photoFileName}:
+    get:
+      operationId: getFriendPhotoByUrl
+      tags: [friends]
+      parameters:
+        - in: path
+          name: photoFileName
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f-]{36}\\.png$" }
+      responses:
+        "200":
+          description: PNG photo URL remains available for 30 days after upload.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages/{messageId}/photo:
+    get:
+      operationId: viewFriendPhoto
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: messageId
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f-]{36}$" }
+      responses:
+        "200":
+          description: Authenticated sender or recipient may view the photo repeatedly for 30 days.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
   /api/v1/friends/messages/inbox:
     get:
       operationId: listEphemeralMessages
@@ -438,6 +880,56 @@ paths:
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages/{messageId}:
+    delete:
+      operationId: recallEphemeralMessage
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f-]{36}$" }
+      responses:
+        "200":
+          description: Sender-owned message removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recalled]
+                properties:
+                  recalled: { const: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/friends/messages/{messageId}/recall:
+    post:
+      operationId: recallFriendMessage
+      tags: [friends]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f-]{36}$" }
+      responses:
+        "200":
+          description: Sender-owned message removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [recalled]
+                properties:
+                  recalled: { const: true }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        default: { $ref: "#/components/responses/InternalError" }
   /api/v1/friends/calls/ice-servers:
     get:
       operationId: getVoiceCallIceServers
@@ -460,7 +952,7 @@ paths:
       security: [{ bearerAuth: [] }]
       responses:
         "200":
-          description: Fetch and consume pending friend-to-friend WebRTC signals.
+          description: Fetch and consume pending friend or group-member WebRTC signals.
           content:
             application/json:
               schema:
@@ -485,9 +977,19 @@ paths:
               properties:
                 recipientUserId: { type: string, minLength: 1, maxLength: 64 }
                 callId: { type: string, format: uuid }
-                type: { type: string, enum: [offer, answer, hangup, reject] }
+                groupId: { type: string, format: uuid, description: Optional group whose two members are exchanging this signal. }
+                type: { type: string, enum: [offer, answer, candidate, hangup, reject] }
                 sdp: { type: string, maxLength: 60000 }
       responses:
+        "200":
+          description: A stale group hangup or rejection was ignored because the group or recipient is no longer available.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sent]
+                properties:
+                  sent: { const: false }
         "202":
           description: Signal queued for the friend.
           content:
@@ -617,6 +1119,50 @@ paths:
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/me/elytra:
+    post:
+      operationId: uploadElytra
+      tags: [elytras]
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: "#/components/requestBodies/ElytraPng" }
+      responses:
+        "201": { $ref: "#/components/responses/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidElytra" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+    put:
+      operationId: changeElytra
+      tags: [elytras]
+      security: [{ bearerAuth: [] }]
+      requestBody: { $ref: "#/components/requestBodies/ElytraPng" }
+      responses:
+        "200": { $ref: "#/components/responses/Profile" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422": { $ref: "#/components/responses/InvalidElytra" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
+    delete:
+      operationId: deleteMyElytra
+      tags: [elytras]
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Elytra texture deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Unverified" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
   /api/v1/profiles/{username}:
     get:
       operationId: getPlayerProfile
@@ -680,6 +1226,32 @@ paths:
         "404": { $ref: "#/components/responses/InvalidCode" }
         "429": { $ref: "#/components/responses/RateLimited" }
         default: { $ref: "#/components/responses/InternalError" }
+  /api/v1/profiles/{username}/elytra.png:
+    get:
+      operationId: getPlayerElytra
+      tags: [elytras]
+      parameters:
+        - { $ref: "#/components/parameters/Username" }
+        - name: If-None-Match
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Validated PNG elytra texture.
+          headers:
+            ETag: { schema: { type: string } }
+            Cache-Control: { schema: { type: string } }
+          content:
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+        "304": { description: Elytra texture has not changed. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/InvalidCode" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        default: { $ref: "#/components/responses/InternalError" }
 components:
   securitySchemes:
     bearerAuth:
@@ -724,6 +1296,19 @@ components:
                 type: string
                 format: binary
                 description: PNG cape image of 64x32 pixels, 2:1 aspect ratio, or 22x17 OptiFine format, maximum 1 MiB.
+    ElytraPng:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [elytra]
+            additionalProperties: false
+            properties:
+              elytra:
+                type: string
+                format: binary
+                description: PNG elytra texture of 64x32 pixels or 2:1 aspect ratio, maximum 1 MiB.
   responses:
     SessionTokens:
       description: Short-lived access token and rotating refresh token.
@@ -782,6 +1367,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     InvalidCape:
       description: PNG cape is invalid or its dimensions are unsupported.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InvalidElytra:
+      description: PNG elytra texture is invalid or its dimensions are unsupported.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -868,7 +1458,7 @@ components:
     Profile:
       type: object
       additionalProperties: false
-      required: [username, skin, cape]
+      required: [username, skin, cape, elytra]
       properties:
         username: { type: string }
         skin:
@@ -890,6 +1480,15 @@ components:
               properties:
                 url: { type: string, format: uri }
                 updatedAt: { type: string, format: date-time }
+        elytra:
+          oneOf:
+            - type: "null"
+            - type: object
+              additionalProperties: false
+              required: [url, updatedAt]
+              properties:
+                url: { type: string, format: uri }
+                updatedAt: { type: string, format: date-time }
     FriendList:
       type: object
       additionalProperties: false
@@ -900,10 +1499,11 @@ components:
           items:
             type: object
             additionalProperties: false
-            required: [userId, username, online, inGame]
+            required: [userId, username, minecraftUsername, online, inGame]
             properties:
               userId: { type: string }
               username: { type: string }
+              minecraftUsername: { type: string, nullable: true }
               online: { type: boolean }
               inGame: { type: boolean }
         incomingRequests:
@@ -924,12 +1524,13 @@ components:
     EphemeralMessage:
       type: object
       additionalProperties: false
-      required: [messageId, senderUserId, senderUsername, createdAt]
+      required: [messageId, senderUserId, senderUsername, createdAt, kind]
       properties:
         messageId: { type: string, format: uuid }
         senderUserId: { type: string }
         senderUsername: { type: string }
         createdAt: { type: string, format: date-time }
+        kind: { type: string, enum: [text, photo] }
     ConsumedEphemeralMessage:
       type: object
       additionalProperties: false
@@ -961,13 +1562,14 @@ components:
     VoiceCallSignal:
       type: object
       additionalProperties: false
-      required: [signalId, fromUserId, fromUsername, callId, type, sdp]
+      required: [signalId, fromUserId, fromUsername, callId, type, sdp, groupId]
       properties:
         signalId: { type: string, format: uuid }
         fromUserId: { type: string }
         fromUsername: { type: string }
+        groupId: { type: string, format: uuid, nullable: true }
         callId: { type: string, format: uuid }
-        type: { type: string, enum: [offer, answer, hangup, reject] }
+        type: { type: string, enum: [offer, answer, candidate, hangup, reject] }
         sdp: { type: string }
     Error:
       type: object

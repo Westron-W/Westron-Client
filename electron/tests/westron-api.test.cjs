@@ -12,6 +12,66 @@ const {
   registerWestronIpcHandlers,
 } = require('../westron-api.cjs');
 const { writeLocalSkinIdentity } = require('../westron-skin-identity.cjs');
+const { createMinecraftSkinLookup } = require('../minecraft-skin.cjs');
+
+test('resolves and caches a Minecraft skin texture URL without trusting response hosts', async () => {
+  const textureUrl = `https://textures.minecraft.net/texture/${'a'.repeat(64)}`;
+  const textureValue = Buffer.from(JSON.stringify({
+    textures: { SKIN: { url: textureUrl } },
+  })).toString('base64');
+  const responses = [
+    new Response(JSON.stringify({ id: 'b'.repeat(32) }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+    new Response(JSON.stringify({ properties: [{ name: 'textures', value: textureValue }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+  ];
+  let fetchCount = 0;
+  const lookup = createMinecraftSkinLookup({
+    fetchImpl: async () => {
+      fetchCount += 1;
+      return responses.shift();
+    },
+  });
+  assert.equal(await lookup('MinecraftNick'), textureUrl);
+  assert.equal(await lookup('minecraftnick'), textureUrl);
+  assert.equal(fetchCount, 2);
+
+  const invalidHost = createMinecraftSkinLookup({
+    fetchImpl: async (url) => new Response(JSON.stringify(
+      url.includes('api.mojang.com')
+        ? { id: 'c'.repeat(32) }
+        : { properties: [{ name: 'textures', value: Buffer.from(JSON.stringify({
+          textures: { SKIN: { url: 'https://example.com/skin.png' } },
+        })).toString('base64') }] },
+    ), { status: 200, headers: { 'content-type': 'application/json' } }),
+  });
+  assert.equal(await invalidHost('AnotherNick'), null);
+});
+
+test('loads public friend profiles without browser-side authentication', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      return new Response(JSON.stringify({ username: 'Friend_Name', skin: null, cape: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  const profile = await apiClient.getPublicProfile('Friend_Name');
+
+  assert.equal(profile.username, 'Friend_Name');
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://westronskin.sytes.net/api/v1/profiles/Friend_Name');
+  assert.equal(requests[0].init.method, 'GET');
+  assert.equal(requests[0].init.headers.has('authorization'), false);
+});
 
 test('clears a rejected expired refresh token and requests a fresh sign-in', async () => {
   let storedCredentials = { accessToken: 'expired-access', refreshToken: 'expired-refresh' };
@@ -152,15 +212,33 @@ test('launcher IPC resend channel forwards one POST to the API route without dup
     profile: async () => {},
     uploadSkin: async () => {},
     deleteSkin: async () => 'Skin kaldırıldı.',
+    uploadCape: async () => {},
+    deleteCape: async () => {},
+    uploadElytra: async () => {},
+    deleteElytra: async () => {},
     logout: async () => {},
     listFriends: async () => ({}),
+    getFriendSkinUrl: async () => null,
+    searchFriends: async () => [],
+    listGroups: async () => [],
+    createGroup: async () => ({}),
+    renameGroup: async () => ({}),
+    deleteGroup: async () => ({ deleted: true }),
+    removeGroupMember: async () => ({}),
+    listGroupConversation: async () => [{ messageId: 'group-message' }],
+    sendGroupMessage: async () => ({}),
+    getGroupMessagePhoto: async () => '',
+    sendGroupPhoto: async () => ({ cancelled: true }),
     sendFriendRequest: async () => ({}),
     respondFriendRequest: async () => ({}),
+    cancelFriendRequest: async () => ({}),
     removeFriend: async () => ({}),
     updatePresence: async () => ({}),
     sendEphemeralMessage: async () => ({}),
     listEphemeralMessages: async () => [],
     consumeEphemeralMessage: async () => ({}),
+    listConversation: async () => [],
+    getMessagePhoto: async () => '',
     getVoiceCallIceServers: async () => ({}),
     sendVoiceCallSignal: async () => ({}),
     consumeVoiceCallSignals: async () => [],
@@ -178,9 +256,19 @@ test('launcher IPC resend channel forwards one POST to the API route without dup
   const deleteSkinHandler = registeredHandlers.get(WESTRON_IPC_CHANNELS.deleteSkin);
   assert.equal(typeof deleteSkinHandler, 'function');
   assert.equal(await deleteSkinHandler({}), 'Skin kaldırıldı.');
+  const listGroupConversationHandler = registeredHandlers.get(WESTRON_IPC_CHANNELS.listGroupConversation);
+  assert.equal(typeof listGroupConversationHandler, 'function');
+  assert.deepEqual(await listGroupConversationHandler({}, { groupId: 'group-id' }), [
+    { messageId: 'group-message' },
+  ]);
+  assert.equal(WESTRON_IPC_CHANNELS.listGroupConversation, 'app:westron-list-group-conversation');
+  const deleteGroupHandler = registeredHandlers.get(WESTRON_IPC_CHANNELS.deleteGroup);
+  assert.equal(typeof deleteGroupHandler, 'function');
+  assert.deepEqual(await deleteGroupHandler({}, { groupId: 'group-id' }), { deleted: true });
 
   const preload = await readFile(path.join(__dirname, '..', 'preload.cjs'), 'utf8');
   assert.match(preload, /resendWestronVerification:\s*\(input\)\s*=>\s*invokeWestron\(WESTRON_IPC_CHANNELS\.resendVerification,\s*input\)/);
+  assert.match(preload, /getWestronFriendSkinUrl:\s*\(input\)\s*=>\s*invokeWestron\(WESTRON_IPC_CHANNELS\.getFriendSkinUrl,\s*input\)/);
   assert.doesNotMatch(preload, /require\(['"]\.\/|require\(['"]\.\.\/|require\(['"]electron\/remote/);
 
   const calls = [];
@@ -209,12 +297,23 @@ test('launcher IPC resend channel forwards one POST to the API route without dup
   assert.deepEqual(JSON.parse(JSON.stringify(calls[0][1])), { email: 'pending@example.test' });
   await exposedBridge.deleteWestronSkin();
   assert.equal(calls[1][0], WESTRON_IPC_CHANNELS.deleteSkin);
+  await exposedBridge.deleteWestronGroup({ groupId: 'group-id' });
+  assert.equal(calls[2][0], WESTRON_IPC_CHANNELS.deleteGroup);
   await exposedBridge.listWestronFriends();
-  assert.equal(calls[2][0], WESTRON_IPC_CHANNELS.listFriends);
+  assert.equal(calls[3][0], WESTRON_IPC_CHANNELS.listFriends);
   await assert.rejects(exposedBridge.consumeWestronVoiceCallSignals(), {
     message: 'Westron Skin API uç noktası sunucuda bulunamadı (404)',
   });
-  assert.equal(calls[3][0], WESTRON_IPC_CHANNELS.consumeVoiceCallSignals);
+  assert.equal(calls[4][0], WESTRON_IPC_CHANNELS.consumeVoiceCallSignals);
+  assert.equal(await exposedBridge.requestPasswordReset({ email: 'account@example.test' }), 'IPC response');
+  assert.equal(calls[5][0], WESTRON_IPC_CHANNELS.requestPasswordReset);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[5][1])), { email: 'account@example.test' });
+  assert.equal(await exposedBridge.resetPassword({
+    email: 'account@example.test',
+    token: '1234567890123456789012345678901234567890',
+    newPassword: 'a-secure-new-password',
+  }), 'IPC response');
+  assert.equal(calls[6][0], WESTRON_IPC_CHANNELS.resetPassword);
 });
 
 test('social API calls stay authenticated and use the friends endpoint contract', async () => {
@@ -233,6 +332,7 @@ test('social API calls stay authenticated and use the friends endpoint contract'
   await apiClient.listFriends(token);
   await apiClient.sendFriendRequest('FriendName', token);
   await apiClient.respondFriendRequest('request-id', true, token);
+  await apiClient.cancelFriendRequest('request-id', token);
   await apiClient.removeFriend('friend-id', token);
   await apiClient.updatePresence(true, token);
   await apiClient.sendEphemeralMessage('friend-id', 'Hello', token);
@@ -247,12 +347,13 @@ test('social API calls stay authenticated and use the friends endpoint contract'
   }, token);
   await apiClient.consumeVoiceCallSignals(token);
 
-  assert.equal(requests.length, 11);
+  assert.equal(requests.length, 12);
   assert.ok(requests.every(({ init }) => init.headers.get('authorization') === `Bearer ${token}`));
   assert.deepEqual(requests.map(({ url, init }) => [new URL(url).pathname, init.method || 'GET']), [
     ['/api/v1/friends', 'GET'],
     ['/api/v1/friends/requests', 'POST'],
     ['/api/v1/friends/requests/request-id/respond', 'POST'],
+    ['/api/v1/friends/requests/request-id', 'DELETE'],
     ['/api/v1/friends/friend-id', 'DELETE'],
     ['/api/v1/presence', 'POST'],
     ['/api/v1/friends/messages', 'POST'],
@@ -262,13 +363,150 @@ test('social API calls stay authenticated and use the friends endpoint contract'
     ['/api/v1/friends/calls/signals', 'POST'],
     ['/api/v1/friends/calls/signals', 'GET'],
   ]);
-  assert.deepEqual(JSON.parse(requests[5].init.body), { recipientUserId: 'friend-id', body: 'Hello' });
-  assert.deepEqual(JSON.parse(requests[9].init.body), {
+  assert.deepEqual(JSON.parse(requests[6].init.body), { recipientUserId: 'friend-id', body: 'Hello' });
+  assert.deepEqual(JSON.parse(requests[10].init.body), {
     recipientUserId: 'friend-id',
     callId: 'call-id',
     type: 'offer',
     sdp: 'v=0',
   });
+});
+
+test('downloads an authenticated one-time photo as base64 for renderer IPC', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      return new Response(Uint8Array.from([137, 80, 78, 71]), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      });
+    },
+  });
+  const messageId = '2e3ccf04-4d60-4f66-9c70-152a4e7b9d1c';
+  const result = await apiClient.getMessagePhoto(messageId, 'westron-access-token');
+  assert.equal(result, Buffer.from([137, 80, 78, 71]).toString('base64'));
+  assert.equal(requests[0].url, `https://westronskin.sytes.net${WESTRON_API_PATHS.friendMessagePhoto(messageId)}`);
+  assert.equal(requests[0].init.headers.get('authorization'), 'Bearer westron-access-token');
+});
+
+test('uploads and downloads authenticated group photos through the group message routes', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      if (init.method === 'POST') {
+        return new Response(JSON.stringify({ messageId: 'message-id', kind: 'photo' }), {
+          status: 201,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(Uint8Array.from([137, 80, 78, 71]), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      });
+    },
+  });
+  const groupId = '2e3ccf04-4d60-4f66-9c70-152a4e7b9d1c';
+  const messageId = '6506a0dd-75d0-4a2d-bde2-d9e3cae50409';
+  const token = 'westron-access-token';
+  const uploaded = await apiClient.sendGroupPhotoMessage(groupId, 'photo.jpg', Buffer.from('photo-bytes'), token);
+  const downloaded = await apiClient.getGroupMessagePhoto(groupId, messageId, token);
+
+  assert.deepEqual(uploaded, { messageId: 'message-id', kind: 'photo' });
+  assert.equal(downloaded, Buffer.from([137, 80, 78, 71]).toString('base64'));
+  assert.equal(requests[0].url, `https://westronskin.sytes.net${WESTRON_API_PATHS.friendGroupPhotoMessage(groupId)}`);
+  assert.equal(requests[0].init.headers.get('authorization'), `Bearer ${token}`);
+  const photo = requests[0].init.body.get('photo');
+  assert.equal(photo.type, 'image/jpeg');
+  assert.equal(photo.name, 'photo.jpg');
+  assert.equal(Buffer.from(await photo.arrayBuffer()).toString(), 'photo-bytes');
+  assert.equal(requests[1].url, `https://westronskin.sytes.net${WESTRON_API_PATHS.friendGroupMessagePhoto(groupId, messageId)}`);
+  assert.equal(requests[1].init.headers.get('authorization'), `Bearer ${token}`);
+});
+
+test('deletes an authenticated friend group through its group resource route', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      return new Response(JSON.stringify({ deleted: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  const groupId = '2e3ccf04-4d60-4f66-9c70-152a4e7b9d1c';
+  const token = 'westron-access-token';
+
+  assert.deepEqual(await apiClient.deleteGroup(groupId, token), { deleted: true });
+  assert.equal(requests[0].url, `https://westronskin.sytes.net${WESTRON_API_PATHS.friendGroup(groupId)}`);
+  assert.equal(requests[0].init.method, 'DELETE');
+  assert.equal(requests[0].init.headers.get('authorization'), `Bearer ${token}`);
+});
+
+test('recalls an authenticated group message through its group-scoped route', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      return new Response(JSON.stringify({ recalled: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  const groupId = '2e3ccf04-4d60-4f66-9c70-152a4e7b9d1c';
+  const messageId = '6506a0dd-75d0-4a2d-bde2-d9e3cae50409';
+  const token = 'westron-access-token';
+
+  assert.deepEqual(await apiClient.recallGroupMessage(groupId, messageId, token), { recalled: true });
+  assert.equal(requests[0].url, `https://westronskin.sytes.net${WESTRON_API_PATHS.recallFriendGroupMessage(groupId, messageId)}`);
+  assert.equal(requests[0].init.method, 'POST');
+  assert.equal(requests[0].init.headers.get('authorization'), `Bearer ${token}`);
+});
+
+test('message recall retries the canonical API origin when the configured alias returns 405', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    baseUrl: 'https://westronclient.myvnc.com',
+    fetchImpl: async (url, init) => {
+      requests.push({ url: url.toString(), init });
+      return new Response(JSON.stringify(
+        requests.length === 1 ? { error: { code: 'method_not_allowed' } } : { recalled: true },
+      ), {
+        status: requests.length === 1 ? 405 : 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+
+  const messageId = '2e3ccf04-4d60-4f66-9c70-152a4e7b9d1c';
+  const result = await apiClient.recallEphemeralMessage(messageId, 'token');
+
+  assert.deepEqual(result, { recalled: true });
+  assert.deepEqual(requests.map(({ url, init }) => [new URL(url).origin, new URL(url).pathname, init.method]), [
+    ['https://westronclient.myvnc.com', `/api/v1/friends/messages/${messageId}/recall`, 'POST'],
+    ['https://westronskin.sytes.net', `/api/v1/friends/messages/${messageId}/recall`, 'POST'],
+  ]);
+});
+
+test('canonical API requests do not fall back to the obsolete origin', async () => {
+  const requests = [];
+  const apiClient = createWestronApiClient({
+    fetchImpl: async (url) => {
+      requests.push(url.toString());
+      return new Response(JSON.stringify({ error: { code: 'method_not_allowed' } }), {
+        status: 405,
+        headers: { 'content-type': 'application/json' },
+      });
+    },
+  });
+  await assert.rejects(apiClient.recallEphemeralMessage(
+    '2e3ccf04-4d60-4f66-9c70-152a4e7b9d1c',
+    'token',
+  ), { status: 405, code: 'method_not_allowed' });
+  assert.deepEqual(requests.map((url) => new URL(url).origin), ['https://westronskin.sytes.net']);
 });
 
 test('launcher explains missing API routes without confusing them with endpoint-specific 404 errors', async () => {

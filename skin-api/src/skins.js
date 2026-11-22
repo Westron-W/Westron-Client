@@ -37,14 +37,14 @@ export async function validateSkinPng(buffer) {
   return { buffer: normalized, sha256: createHash('sha256').update(normalized).digest('hex') };
 }
 
-export async function validateCapePng(buffer) {
+async function validateBackTexturePng(buffer, type, label) {
+  const code = `invalid_${type}`;
   if (!Buffer.isBuffer(buffer) || buffer.length < PNG_SIGNATURE.length || buffer.length > MAX_SKIN_BYTES) {
-    throw new ApiError(413, 'invalid_cape_size', 'Pelerin PNG dosyası boş olamaz ve 1 MiB sınırını aşamaz.');
+    throw new ApiError(413, `${code}_size`, `${label} PNG dosyası boş olamaz ve 1 MiB sınırını aşamaz.`);
   }
   if (!buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
-    throw new ApiError(415, 'invalid_cape_format', 'Dosya geçerli bir PNG pelerin olmalıdır.');
+    throw new ApiError(415, `${code}_format`, `Dosya geçerli bir PNG ${label.toLowerCase()} olmalıdır.`);
   }
-
   let metadata;
   let normalized;
   try {
@@ -52,21 +52,29 @@ export async function validateCapePng(buffer) {
     metadata = await image.metadata();
     const isStandard = metadata.width === 64 && metadata.height === 32;
     const isRatio = metadata.width / metadata.height === 2 && metadata.width <= 1024 && metadata.height <= 512;
-    const isOptifine = metadata.width === 22 && metadata.height === 17;
+    const isOptifine = type === 'cape' && metadata.width === 22 && metadata.height === 17;
     if (metadata.format !== 'png'
       || (metadata.pages !== undefined && metadata.pages !== 1)
       || (!isStandard && !isRatio && !isOptifine)) {
-      throw new ApiError(422, 'invalid_cape_dimensions', 'Pelerin ölçüsü 64x32 veya 2:1 oranında olmalıdır.');
+      throw new ApiError(422, `${code}_dimensions`, `${label} ölçüsü 64x32 veya 2:1 oranında olmalıdır.`);
     }
     normalized = await sharp(buffer, { limitInputPixels: 4096, failOn: 'error' }).png().toBuffer();
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError(415, 'invalid_cape_image', 'PNG dosyası bozuk veya okunamıyor.');
+    throw new ApiError(415, `${code}_image`, 'PNG dosyası bozuk veya okunamıyor.');
   }
   if (normalized.length > MAX_SKIN_BYTES) {
-    throw new ApiError(413, 'invalid_cape_size', 'İşlenmiş pelerin PNG dosyası 1 MiB sınırını aşıyor.');
+    throw new ApiError(413, `${code}_size`, `İşlenmiş ${label.toLowerCase()} PNG dosyası 1 MiB sınırını aşıyor.`);
   }
   return { buffer: normalized, sha256: createHash('sha256').update(normalized).digest('hex') };
+}
+
+export async function validateCapePng(buffer) {
+  return validateBackTexturePng(buffer, 'cape', 'Pelerin');
+}
+
+export async function validateElytraPng(buffer) {
+  return validateBackTexturePng(buffer, 'elytra', 'Elitra');
 }
 
 export async function persistSkin({ userId, model, image, skinsDir, database, logger, replace }) {
@@ -114,8 +122,9 @@ export async function persistSkin({ userId, model, image, skinsDir, database, lo
     .get(userId);
 }
 
-export async function persistCape({ userId, image, skinsDir, database, logger, replace }) {
-  const storageKey = path.posix.join(userId, `cape-${randomUUID()}.png`);
+async function persistBackTexture({ userId, image, skinsDir, database, logger, replace, type, label }) {
+  const table = `${type}s`;
+  const storageKey = path.posix.join(userId, `${type}-${randomUUID()}.png`);
   const destination = path.join(skinsDir, storageKey);
   const temporary = `${destination}.tmp`;
   await mkdir(path.dirname(destination), { recursive: true });
@@ -124,15 +133,15 @@ export async function persistCape({ userId, image, skinsDir, database, logger, r
     await writeFile(temporary, image.buffer, { flag: 'wx', mode: 0o600 });
     await rename(temporary, destination);
     previous = database.transaction(() => {
-      const current = database.prepare('SELECT storage_key FROM capes WHERE user_id = ?').get(userId);
+      const current = database.prepare(`SELECT storage_key FROM ${table} WHERE user_id = ?`).get(userId);
       if (replace && !current) {
-        throw new ApiError(404, 'cape_not_found', 'Değiştirilecek bir pelerin bulunamadı.');
+        throw new ApiError(404, `${type}_not_found`, `Değiştirilecek bir ${label.toLowerCase()} bulunamadı.`);
       }
       if (!replace && current) {
-        throw new ApiError(409, 'cape_exists', 'Pelerin zaten mevcut; değiştirmek için PUT kullanın.');
+        throw new ApiError(409, `${type}_exists`, `${label} zaten mevcut; değiştirmek için PUT kullanın.`);
       }
       database.prepare(`
-        INSERT INTO capes (user_id, storage_key, sha256, updated_at)
+        INSERT INTO ${table} (user_id, storage_key, sha256, updated_at)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(user_id) DO UPDATE SET
           storage_key = excluded.storage_key,
@@ -151,11 +160,19 @@ export async function persistCape({ userId, image, skinsDir, database, logger, r
     try {
       await rm(path.join(skinsDir, previous.storage_key), { force: true });
     } catch (error) {
-      logger.error({ err: error }, 'Could not remove replaced cape file');
+      logger.error({ err: error }, `Could not remove replaced ${type} file`);
     }
   }
-  return database.prepare('SELECT user_id, storage_key, sha256, updated_at FROM capes WHERE user_id = ?')
+  return database.prepare(`SELECT user_id, storage_key, sha256, updated_at FROM ${table} WHERE user_id = ?`)
     .get(userId);
+}
+
+export async function persistCape(options) {
+  return persistBackTexture({ ...options, type: 'cape', label: 'Pelerin' });
+}
+
+export async function persistElytra(options) {
+  return persistBackTexture({ ...options, type: 'elytra', label: 'Elitra' });
 }
 
 export async function removeSkinFile(skinsDir, storageKey, logger) {

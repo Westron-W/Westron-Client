@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0b0c11" />
+    <meta name="application-name" content="Westron Launcher" />
+    <meta name="description" content="Westron Launcher'ı Windows ve macOS için indir; oyun profillerini, skinini ve arkadaşlarınla bağlantını tek yerden yönet." />
+    <meta property="og:site_name" content="Westron Launcher" />
+    <meta property="og:title" content="Westron Launcher" />
+    <meta property="og:description" content="Minecraft profillerini düzenle, karakterini kişiselleştir ve arkadaşlarınla buluş." />
+    <meta property="og:image" content="https://westronclient.myvnc.com/favicon.svg" />
+    <title>Westron Launcher</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/skinview3d.bundle.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="page-glow page-glow-one" aria-hidden="true"></div>
+    <div class="page-glow page-glow-two" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/" data-page="download" aria-label="Westron Launcher ana sayfa">
+        <span class="brand-mark" aria-hidden="true"><img class="brand-logo" src="/favicon.svg" alt="" /></span>
+        <span class="brand-copy"><strong>Westron Launcher</strong></span>
+      </a>
+      <nav class="main-nav" aria-label="Ana menü">
+        <button class="nav-link active" type="button" data-page="download">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 3.5 7.6v8.8L12 21l8.5-4.6V7.6L12 3Z" /><path d="m8 9 4 2.2L16 9m-4 2.2V16" /></svg>
+          <span>Westron Launcher</span>
+        </button>
+        <button class="nav-link" type="button" data-page="character">
+          <svg class="nav-icon clothing-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 2.5 1.5h3L16 4l4.5 3-2.2 4-2.1-1.2V21H7.8V9.8L5.7 11 3.5 7 8 4Z" /><path d="m10.5 5.5 1.5 2 1.5-2" /><path d="M7.8 10v11m8.4-11v11" /></svg>
+          <span>Karakter</span>
+        </button>
+        <button class="nav-link" type="button" data-page="account">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" /><path d="M5 20v-1a7 7 0 0 1 14 0v1H5Z" /></svg>
+          <span>Hesap</span>
+        </button>
+      </nav>
+      <div class="topbar-right">
+        <span class="api-status" id="apiStatus"><i></i><span>Bağlantı kontrol ediliyor</span></span>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section class="app-page download-page active" id="downloadPage">
+        <div class="download-hero">
+          <div class="download-copy">
+            <div class="eyebrow"><span class="eyebrow-line"></span> WESTRON LAUNCHER</div>
+            <h1>Macera<br /><span>burada başlıyor.</span></h1>
+            <p>Minecraft dünyana Westron Launcher ile katıl. İşletim sistemini seç, launcher'ı indir ve kendi tarzınla oyna.</p>
+            <div class="download-actions">
+              <a class="download-card windows-download" href="https://github.com/Westron-W/Westron-Client/releases/download/v1.0.3/Windows-Westron-Launcher-Setup-1.0.3.exe">
+                <span class="platform-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M3 5.2 10.8 4v7.4H3V5.2Zm9.3-1.4L21 2.5v8.9h-8.7V3.8ZM3 12.8h7.8v7.4L3 18.9v-6.1Zm9.3 0H21v8.8l-8.7-1.3v-7.5Z" /></svg>
+                </span>
+                <span class="download-card-copy"><small>WINDOWS İÇİN</small><strong>Windows sürümünü indir</strong><em>Kurulum dosyası · .exe</em></span>
+                <svg class="download-arrow" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v10m0 0 4-4m-4 4L6 9M4 15v2h12v-2" /></svg>
+              </a>
+              <a class="download-card mac-download" href="https://github.com/Westron-W/Westron-Client/releases/download/v1.0.3/MacOS-Westron-Launcher-1.0.3.dmg">
+                <span class="platform-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M16.8 12.7c0-2 1.6-3 1.7-3.1a3.7 3.7 0 0 0-2.9-1.6c-1.2-.1-2.3.7-2.9.7-.7 0-1.6-.7-2.6-.7a3.9 3.9 0 0 0-3.3 2c-1.4 2.4-.4 6 1 8 .7 1 1.5 2 2.5 2 1 0 1.3-.6 2.5-.6 1.1 0 1.5.6 2.5.6s1.7-.9 2.4-1.9a8 8 0 0 0 1.1-2.2 3.5 3.5 0 0 1-2-3.2ZM14.8 6.7a3.6 3.6 0 0 0 .8-2.6 3.8 3.8 0 0 0-2.4 1.2 3.4 3.4 0 0 0-.8 2.5 3.2 3.2 0 0 0 2.4-1.1Z" /></svg>
+                </span>
+                <span class="download-card-copy"><small>macOS İÇİN</small><strong>macOS sürümünü indir</strong><em>Disk kalıbı · .dmg</em></span>
+                <svg class="download-arrow" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v10m0 0 4-4m-4 4L6 9M4 15v2h12v-2" /></svg>
+              </a>
+            </div>
+            <a class="release-link" href="https://github.com/Westron-W/Westron-Client/releases/tag/v1.0.3" target="_blank" rel="noreferrer">Sürüm notlarını ve diğer indirmeleri gör <span>↗</span></a>
+          </div>
+          <div class="download-art" aria-hidden="true">
+            <div class="art-glow"></div>
+            <div class="art-ring ring-back"></div><div class="art-ring ring-front"></div>
+            <div class="art-platform"></div>
+            <div class="art-cube">
+              <span class="art-cube-top"></span><span class="art-cube-front"></span><span class="art-cube-side"></span>
+              <span class="art-cube-mark">W</span>
+            </div>
+            <span class="art-spark spark-one">✦</span><span class="art-spark spark-two">✧</span>
+            <div class="art-caption"><i></i> KENDİ DÜNYANI KUR</div>
+          </div>
+        </div>
+        <div class="download-bottom">
+          <div><span class="bottom-icon">✦</span><span><b>Kendi tarzın, kendi dünyan</b><small>Skinini ve karakterini kişiselleştir.</small></span></div>
+          <div><span class="bottom-icon">▦</span><span><b>Seçimini yap, oyuna başla</b><small>Windows ve macOS için ücretsiz indir.</small></span></div>
+          <button type="button" class="bottom-link" data-page="character">Karakterini düzenle <span>→</span></button>
+        </div>
+        <section class="launcher-intro" aria-labelledby="launcherIntroTitle">
+          <div class="launcher-intro-heading">
+            <span class="overline">OYUNA HAZIRLAN</span>
+            <h2 id="launcherIntroTitle">Oyun deneyimin, tek bir yerde.</h2>
+            <p>Westron Launcher; kurulumunu düzenlemene, karakterini kişiselleştirmene ve arkadaşlarınla bağlantıda kalmana yardımcı olur.</p>
+          </div>
+          <div class="launcher-feature-grid">
+            <article class="launcher-feature-card">
+              <span class="feature-card-icon" aria-hidden="true">▦</span>
+              <h3>Kurulumunu düzenle</h3>
+              <p>Oyun sürümünü ve mod profilini seç, kendi oyun düzenini oluştur.</p>
+            </article>
+            <article class="launcher-feature-card">
+              <span class="feature-card-icon" aria-hidden="true">✦</span>
+              <h3>Karakterini kişiselleştir</h3>
+              <p>Skinini ve pelerinini yönet, karakterini 3D önizlemede incele.</p>
+            </article>
+            <article class="launcher-feature-card">
+              <span class="feature-card-icon" aria-hidden="true">◎</span>
+              <h3>Arkadaşlarınla buluş</h3>
+              <p>Birebir veya grup sohbetlerinde arkadaşlarınla iletişimde kal.</p>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section class="app-page content-page hidden" id="characterPage">
+        <div class="page-heading">
+          <div><span class="overline">WESTRON LAUNCHER</span><h1>Karakterin &amp; pelerinin</h1><p>Görünümünü özelleştir, değişikliklerini 3D karakterinde önizle.</p></div>
+          <span class="page-chip"><i></i> WESTRON HESABI</span>
+        </div>
+        <div class="auth-required panel hidden" id="characterLocked">
+          <span class="feature-icon"><svg class="clothing-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 2.5 1.5h3L16 4l4.5 3-2.2 4-2.1-1.2V21H7.8V9.8L5.7 11 3.5 7 8 4Z" /><path d="m10.5 5.5 1.5 2 1.5-2" /><path d="M7.8 10v11m8.4-11v11" /></svg></span>
+          <h2>Karakterini yönetmek için giriş yap</h2>
+          <p>Westron hesabınla skin ve pelerin yükleyebilir, karakterini 3D olarak görüntüleyebilirsin.</p>
+          <button class="primary-button compact-button" type="button" data-page="account"><span>Hesaba git</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" /></svg></button>
+        </div>
+
+        <div class="character-studio hidden" id="characterStudio">
+          <section class="panel model-panel">
+            <div class="panel-title-row"><div class="panel-title-icon"><svg class="clothing-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 2.5 1.5h3L16 4l4.5 3-2.2 4-2.1-1.2V21H7.8V9.8L5.7 11 3.5 7 8 4Z" /><path d="m10.5 5.5 1.5 2 1.5-2" /><path d="M7.8 10v11m8.4-11v11" /></svg></div><div><h2>3D karakter önizlemesi</h2><p>Sürükleyerek döndür, animasyon ve hızı ayarla.</p></div><button id="rotateToggle" class="subtle-button" type="button" aria-pressed="true"><span class="toggle-icon">↻</span><span>Dönüş açık</span></button></div>
+            <div class="model-stage" id="modelStage">
+              <canvas class="skin-viewer" id="skinViewer" role="img" aria-label="Minecraft karakterinin döndürülebilir 3D önizlemesi"></canvas>
+              <span class="model-hint">SÜRÜKLEYEREK DÖNDÜR</span>
+            </div>
+            <div class="model-controls">
+              <label class="control-group"><span>Animasyon</span><select id="animationSelect"><option value="walk">Yürü</option><option value="idle">Dur</option><option value="run">Koş</option></select></label>
+              <button id="animationToggle" class="subtle-button" type="button"><span class="toggle-icon">Ⅱ</span><span>Duraklat</span></button>
+              <label class="speed-control"><span>Hız <b id="speedValue">1.0×</b></span><input id="animationSpeed" type="range" min="0.4" max="2" step="0.1" value="1" /></label>
+            </div>
+          </section>
+
+          <section class="panel appearance-panel">
+            <div class="section-title"><span class="section-title-mark">✦</span><div><h2>Görünümünü düzenle</h2><p>Skinini ve pelerinini seç, modelinde anında gör.</p></div></div>
+            <div class="appearance-item">
+              <div class="appearance-info"><img class="appearance-thumb" id="accountFace" alt="" /><span><b>Westron skin profili</b><small id="skinDetail">Henüz bir skin yüklemedin</small></span></div>
+              <div class="appearance-actions">
+                <label class="select-model"><span class="visually-hidden">Skin modeli</span><select id="skinModelSelect"><option value="classic">Classic</option><option value="slim">Slim</option></select></label>
+                <label class="file-button" for="skinFile"><span>↑</span><span id="skinFileName">PNG skin yükle</span></label>
+                <button id="uploadButton" class="upload-inline-button" type="submit" form="skinUploadForm" disabled>Skin yükle</button>
+                <button id="deleteSkinButton" class="subtle-button danger-button hidden" type="button"><span>⌫</span> Skini kaldır</button>
+              </div>
+            </div>
+            <form id="skinUploadForm" class="hidden-form"><input id="skinFile" name="skin" type="file" accept="image/png,.png" /></form>
+            <p class="form-message appearance-message" id="skinMessage" role="status" aria-live="polite"></p>
+            <div class="appearance-item cape-item">
+              <div class="appearance-info"><span class="cape-thumb" id="capeThumb">✦</span><span><b>Westron pelerini</b><small id="capeDetail">Henüz bir pelerin yüklemedin</small></span></div>
+              <div class="appearance-actions">
+                <label class="file-button" for="capeFile"><span>↑</span><span id="capeFileName">PNG pelerin yükle</span></label>
+                <button id="capeUploadButton" class="upload-inline-button hidden" type="button">Pelerini yükle</button>
+                <button id="deleteCapeButton" class="subtle-button danger-button hidden" type="button"><span>⌫</span> Pelerini kaldır</button>
+              </div>
+              <input id="capeFile" class="visually-hidden" type="file" accept="image/png,.png" />
+            </div>
+            <p class="form-message appearance-message" id="capeMessage" role="status" aria-live="polite"></p>
+            <div class="upload-guidance"><span>i</span><p>Skin: PNG, 64×64 veya 64×32 px. Pelerin: PNG, 64×32, 22×17 px veya 2:1 oran. Her dosya en fazla 1 MB olabilir.</p></div>
+          </section>
+          <p class="client-note"><span>✦</span> Özel skin ve pelerinler Westron skin modunu kullanan oyunculara görünür. Modsuz istemciler özel görünümleri gösteremez.</p>
+          <p class="form-message dashboard-message" id="dashboardMessage" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="app-page content-page hidden" id="accountPage">
+        <div class="page-heading">
+          <div><span class="overline">WESTRON HESABI</span><h1>Hesap</h1><p>Westron hesap bilgilerini ve giriş ayarlarını yönet.</p></div>
+        </div>
+        <div class="auth-card hidden" id="authCard">
+          <div class="card-topline"><div class="mini-mark" aria-hidden="true"><img src="/favicon.svg" alt="" /></div><span class="secure-label"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg> GÜVENLİ HESAP</span></div>
+          <div class="auth-view" id="loginView">
+            <div class="card-heading"><span class="overline">TEKRAR HOŞ GELDİN</span><h2>Hesabına giriş yap</h2><p>Skin ve karakter ayarlarına erişmek için giriş yap.</p></div>
+            <form id="loginForm" class="form-stack">
+              <label class="field"><span>E-posta adresi</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2" /><path d="m3.5 5 6.5 5 6.5-5" /></svg><input name="email" type="email" autocomplete="email" placeholder="ornek@mail.com" required /></span></label>
+              <label class="field"><span class="field-label-row">Parola <button class="text-button" type="button" data-view="forgot">Parolamı unuttum</button></span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="8" width="14" height="10" rx="2" /><path d="M6 8V5a4 4 0 0 1 8 0v3m-4 4v2" /></svg><input name="password" type="password" autocomplete="current-password" placeholder="Parolan" required /></span></label>
+              <button class="primary-button" type="submit"><span>Giriş yap</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" /></svg></button><p class="form-message" id="loginMessage" role="status" aria-live="polite"></p>
+            </form>
+            <div class="card-footer">Henüz hesabın yok mu? <button class="text-button" type="button" data-view="register">Hesap oluştur</button></div>
+          </div>
+          <div class="auth-view hidden" id="registerView">
+            <div class="card-heading"><span class="overline">WESTRON TOPLULUĞUNA KATIL</span><h2>Hesabını oluştur</h2><p>Skinini yönetmek için birkaç bilgi yeterli.</p></div>
+            <form id="registerForm" class="form-stack">
+              <label class="field"><span>Oyuncu adı</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6.5" r="3" /><path d="M4 17v-1.5a6 6 0 0 1 12 0V17H4Z" /></svg><input name="username" autocomplete="username" minlength="3" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" placeholder="OyuncuAdin" required /></span><small class="field-hint">3–16 karakter; harf, rakam ve alt çizgi.</small></label>
+              <label class="field"><span>E-posta adresi</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2" /><path d="m3.5 5 6.5 5 6.5-5" /></svg><input name="email" type="email" autocomplete="email" placeholder="ornek@mail.com" required /></span></label>
+              <label class="field"><span>Parola</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="8" width="14" height="10" rx="2" /><path d="M6 8V5a4 4 0 0 1 8 0v3m-4 4v2" /></svg><input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" placeholder="En az 12 karakter" required /></span></label>
+              <button class="primary-button" type="submit"><span>Hesap oluştur</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" /></svg></button><p class="form-message" id="registerMessage" role="status" aria-live="polite"></p>
+            </form>
+            <div class="card-footer">Zaten hesabın var mı? <button class="text-button" type="button" data-view="login">Giriş yap</button></div>
+          </div>
+          <div class="auth-view hidden" id="verifyView">
+            <div class="card-heading"><span class="overline">E-POSTA DOĞRULAMA</span><h2>Gelen kutunu kontrol et</h2><p>Hesabını etkinleştirmek için e-postana gönderilen 6 haneli kodu gir.</p></div>
+            <form id="verifyForm" class="form-stack">
+              <label class="field"><span>E-posta adresi</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2" /><path d="m3.5 5 6.5 5 6.5-5" /></svg><input name="email" type="email" autocomplete="email" required /></span></label>
+              <label class="field"><span>Doğrulama kodu</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1" /><circle cx="10" cy="10" r="1" /><circle cx="15" cy="10" r="1" /><path d="M3 4h14v12H3z" /></svg><input name="token" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required /></span></label>
+              <button class="primary-button" type="submit"><span>E-postayı doğrula</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg></button><p class="form-message" id="verifyMessage" role="status" aria-live="polite"></p>
+            </form>
+            <div class="card-footer"><button class="text-button" id="resendVerification" type="button">Yeni kod gönder</button><button class="text-button" type="button" data-view="login">Giriş ekranına dön</button></div>
+          </div>
+          <div class="auth-view hidden" id="forgotView">
+            <div class="card-heading"><span class="overline">HESAP KURTARMA</span><h2>Parolanı sıfırla</h2><p>E-posta adresine parola sıfırlama kodu gönderelim.</p></div>
+            <form id="forgotForm" class="form-stack">
+              <label class="field"><span>E-posta adresi</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2" /><path d="m3.5 5 6.5 5 6.5-5" /></svg><input name="email" type="email" autocomplete="email" required /></span></label>
+              <button class="primary-button" type="submit"><span>Sıfırlama kodu gönder</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" /></svg></button><p class="form-message" id="forgotMessage" role="status" aria-live="polite"></p>
+            </form>
+            <form id="resetForm" class="form-stack reset-form">
+              <label class="field"><span>E-postana gelen kod</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="5" cy="10" r="1" /><circle cx="10" cy="10" r="1" /><circle cx="15" cy="10" r="1" /><path d="M3 4h14v12H3z" /></svg><input name="token" inputmode="numeric" maxlength="6" placeholder="000000" required /></span></label>
+              <label class="field"><span>Yeni parola</span><span class="input-wrap"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="8" width="14" height="10" rx="2" /><path d="M6 8V5a4 4 0 0 1 8 0v3m-4 4v2" /></svg><input name="newPassword" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="En az 12 karakter" required /></span></label>
+              <button class="primary-button secondary-submit" type="submit"><span>Parolayı güncelle</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg></button><p class="form-message" id="resetMessage" role="status" aria-live="polite"></p>
+            </form>
+            <div class="card-footer"><button class="text-button" type="button" data-view="login">Giriş ekranına dön</button></div>
+          </div>
+        </div>
+
+        <section class="account-summary panel hidden" id="accountSummary">
+          <div class="account-section-title"><span class="panel-title-icon"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="6" r="3" /><path d="M4 17v-1.5a6 6 0 0 1 12 0V17H4Z" /></svg></span><span><b>Westron hesabı</b><small>Westron hesap bilgilerini ve giriş ayarlarını yönet.</small></span></div>
+          <div class="account-profile">
+            <img class="account-avatar" id="accountAvatar" alt="" />
+            <div class="account-ident"><span class="overline">HESAP ÖZETİ</span><h2 id="accountUsername">oyuncu</h2><p id="accountEmail">—</p></div>
+            <span class="verified-badge" id="verifiedBadge"><i>✓</i> E-posta doğrulandı</span>
+          </div>
+          <div class="account-actions">
+            <div class="verified-message"><span class="feature-icon"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 4.5 10 2l6 2.5v6c0 3.5-2.6 6.1-6 7.5-3.4-1.4-6-4-6-7.5v-6Z" /><path d="m7.2 9.8 1.8 1.8 3.9-4" /></svg></span><span><b id="accountStatusTitle">Hesabın doğrulandı</b><small>Hesap bilgilerin ve doğrulama durumun burada.</small></span></div>
+            <button id="logoutButton" class="subtle-button logout-button" type="button"><span>⇥</span> Çıkış yap</button>
+          </div>
+          <p class="form-message dashboard-message" id="accountMessage" role="status" aria-live="polite"></p>
+        </section>
+      </section>
+    </main>
+
+    <footer class="site-footer"><span>© 2026 Westron Launcher</span><span>Bir Westron hesabı gerekir · <a href="https://github.com/Westron-W/Westron-Client" target="_blank" rel="noreferrer">GitHub</a></span></footer>
+  </body>
+</html>

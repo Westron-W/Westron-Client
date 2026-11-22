@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu, nativeImage, net, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage, Menu, nativeImage, net, session, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const packageJson = require('../package.json');
 const fs = require('node:fs/promises');
@@ -6,6 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
 app.setName('Westron Launcher');
+if (process.platform === 'win32') app.setAppUserModelId('com.westron.launcher');
 app.setPath('cache', path.join(app.getPath('userData'), 'renderer-cache-v2'));
 const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
@@ -32,8 +33,8 @@ const { createMicrosoftAuthService } = require('./microsoft-auth.cjs');
 const { addVerifiedMavenMirrors, formatInstallError } = require('./minecraft-downloads.cjs');
 const { readUpdateFiles } = require('./update-publisher.cjs');
 const { configureUpdateFeed } = require('./update-config.cjs');
-const { getTitleBarOverlayOptions } = require('./native-titlebar.cjs');
 const { canGrantAudioMediaPermission } = require('./media-permissions.cjs');
+const { createMinecraftSkinLookup } = require('./minecraft-skin.cjs');
 const {
   getPerformancePresetProjects,
   QUALITY_SHADER,
@@ -62,6 +63,7 @@ const {
   getScreenshotsDirectory,
   listScreenshots,
   readScreenshot,
+  resolveScreenshotPath,
 } = require('./game-screenshots.cjs');
 
 const GAME_VERSION = '26.3';
@@ -76,6 +78,7 @@ const westronApi = createWestronApiClient({
   baseUrl: WESTRON_SKIN_API_BASE_URL,
   fetchImpl: (url, options) => net.fetch(url, options),
 });
+const getMinecraftSkinUrl = createMinecraftSkinLookup();
 const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const WESTRON_AUTH_FILE = () => path.join(app.getPath('userData'), 'westron-auth.bin');
 const MICROSOFT_AUTH_FILE = () => path.join(app.getPath('userData'), 'microsoft-auth.bin');
@@ -83,7 +86,14 @@ let minecraftKitPromise;
 let minecraftVersionsCache = { expiresAt: 0, versions: [] };
 let updateStatus = { status: 'idle', currentVersion: DISPLAY_VERSION, percent: 0 };
 let updateCheckPromise = null;
-let nativePerformanceThemeEnabled = true;
+let voiceCallActive = false;
+let mainWindow = null;
+let voiceCallWindow = null;
+let voiceCallWindowReady = false;
+let voiceCallWindowState = null;
+let mainWindowHiddenForVoiceCall = false;
+let isClosingVoiceCallWindow = false;
+let appIsQuitting = false;
 const activeGameSessions = new Set();
 const refreshWestronAuth = createWestronAuthRefresher({
   readCredentials: readWestronAuth,
@@ -488,6 +498,154 @@ async function westronListFriends() {
   return withWestronApiAccess((accessToken) => westronApi.listFriends(accessToken));
 }
 
+async function westronGetFriendSkinUrl(input) {
+  const username = typeof input?.username === 'string' ? input.username.trim() : '';
+  const rawMinecraftUsername = typeof input?.minecraftUsername === 'string'
+    ? input.minecraftUsername.trim()
+    : '';
+  const minecraftUsername = /^[A-Za-z0-9_]{3,16}$/.test(rawMinecraftUsername)
+    ? rawMinecraftUsername
+    : null;
+  if (!/^[A-Za-z0-9_]{3,16}$/.test(username)) {
+    console.warn('[Westron] Profil adı geçersiz olduğu için skin isteği atlandı.');
+    return null;
+  }
+  if (rawMinecraftUsername && !minecraftUsername) {
+    console.warn('[Westron] Minecraft kullanıcı adı geçersiz; skin araması Westron adıyla yapılacak.');
+  }
+
+  let profile = null;
+  try {
+    profile = await westronApi.getPublicProfile(username);
+  } catch (error) {
+    const status = Number(error?.status);
+    const unavailable = error instanceof TypeError
+      || error?.name === 'TimeoutError'
+      || error?.message === 'Westron Skin API sunucusuna ulaşılamadı.'
+      || error?.message === 'Westron Skin API geçersiz bir yanıt döndürdü.'
+      || [404, 429, 500, 502, 503, 504].includes(status);
+    if (!unavailable) {
+      throw error;
+    }
+  }
+  const skinUrl = profile?.skin?.url;
+  if (typeof skinUrl === 'string') {
+    try {
+      const url = new URL(skinUrl);
+      const trustedOrigins = [
+        new URL(WESTRON_SKIN_API_BASE_URL).origin,
+        'https://westronclient.myvnc.com',
+      ];
+      if (url.protocol === 'https:' && trustedOrigins.includes(url.origin)) {
+        return `${url.href}${url.search ? '&' : '?'}v=${encodeURIComponent(profile.skin.updatedAt ?? '')}`;
+      }
+    } catch {
+      return getMinecraftSkinUrl(minecraftUsername || username);
+    }
+  }
+  return getMinecraftSkinUrl(minecraftUsername || username);
+}
+
+async function westronSearchFriends({ query }) {
+  if (typeof query !== 'string' || query.length > 16) {
+    return [];
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.searchFriends(query.trim(), accessToken));
+}
+
+async function westronListGroups() {
+  return withWestronApiAccess((accessToken) => westronApi.listGroups(accessToken));
+}
+
+async function westronCreateGroup({ name, memberUserIds }) {
+  if (typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 32
+    || !Array.isArray(memberUserIds)) {
+    throw new Error('Grup bilgileri geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.createGroup(name.trim(), memberUserIds, accessToken));
+}
+
+async function westronRenameGroup({ groupId, name }) {
+  if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)
+    || typeof name !== 'string' || name.trim().length < 1 || name.trim().length > 32) {
+    throw new Error('Grup bilgileri geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.renameGroup(groupId, name.trim(), accessToken));
+}
+
+async function westronDeleteGroup({ groupId }) {
+  if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)) {
+    throw new Error('Grup kimliği geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.deleteGroup(groupId, accessToken));
+}
+
+async function westronRemoveGroupMember({ groupId, memberUserId }) {
+  if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)
+    || typeof memberUserId !== 'string' || !memberUserId.trim() || memberUserId.length > 64) {
+    throw new Error('Grup üyesi bilgileri geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.removeGroupMember(groupId, memberUserId, accessToken));
+}
+
+async function westronListGroupConversation({ groupId }) {
+  if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)) {
+    throw new Error('Grup kimliği geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.listGroupConversation(groupId, accessToken));
+}
+
+async function westronSendGroupMessage({ groupId, body }) {
+  if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)
+    || typeof body !== 'string' || !body.trim() || body.length > 2000) {
+    throw new Error('Grup mesajı bilgileri geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.sendGroupMessage(groupId, body, accessToken));
+}
+
+async function westronGetGroupMessagePhoto({ groupId, messageId }) {
+  if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)
+    || typeof messageId !== 'string' || !/^[0-9a-f-]{36}$/i.test(messageId)) {
+    throw new Error('Grup fotoğrafı bilgisi geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.getGroupMessagePhoto(groupId, messageId, accessToken));
+}
+
+async function westronSendGroupPhoto({ groupId, filePath, fileName, fileBuffer }) {
+  if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)) {
+    throw new Error('Grup kimliği geçersiz.');
+  }
+  if (!Buffer.isBuffer(fileBuffer) && (typeof filePath !== 'string' || !filePath.trim())) {
+    throw new Error('Fotoğraf dosyası seçilmedi.');
+  }
+  const uploadBuffer = Buffer.isBuffer(fileBuffer) ? fileBuffer : await fs.readFile(filePath);
+  const uploadName = typeof fileName === 'string' ? fileName : path.basename(filePath);
+  if (!/\.(png|jpe?g)$/i.test(uploadName)) throw new Error('Fotoğraf biçimi desteklenmiyor.');
+  if (uploadBuffer.length > 10 * 1024 * 1024) {
+    throw new Error('Fotoğraf 10 MiB sınırını aşamaz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.sendGroupPhotoMessage(groupId, uploadName, uploadBuffer, accessToken));
+}
+
+async function westronChooseAndSendGroupPhoto({ groupId }) {
+  const selection = await dialog.showOpenDialog({
+    title: 'Gruba fotoğraf gönder',
+    properties: ['openFile'],
+    filters: [{ name: 'Fotoğraf', extensions: ['png', 'jpg', 'jpeg'] }],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return { cancelled: true };
+  const result = await westronSendGroupPhoto({ groupId, filePath: selection.filePaths[0] });
+  return { cancelled: false, ...result };
+}
+
 async function westronSendFriendRequest({ username }) {
   if (typeof username !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(username)) {
     throw new Error('Westron kullanıcı adı geçersiz.');
@@ -502,6 +660,13 @@ async function westronRespondToFriendRequest({ requestId, accept }) {
   return withWestronApiAccess((accessToken) => westronApi.respondFriendRequest(requestId, accept, accessToken));
 }
 
+async function westronCancelFriendRequest({ requestId }) {
+  if (typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/i.test(requestId)) {
+    throw new Error('Arkadaşlık isteği bilgisi geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.cancelFriendRequest(requestId, accessToken));
+}
+
 async function westronRemoveFriend({ userId }) {
   if (typeof userId !== 'string' || !userId.trim() || userId.length > 64) {
     throw new Error('Arkadaş hesabı geçersiz.');
@@ -509,9 +674,10 @@ async function westronRemoveFriend({ userId }) {
   return withWestronApiAccess((accessToken) => westronApi.removeFriend(userId, accessToken));
 }
 
-async function westronUpdatePresence({ inGame }) {
+async function westronUpdatePresence({ inGame, serverName }) {
   if (typeof inGame !== 'boolean') throw new Error('Oyuncu durumu geçersiz.');
-  return withWestronApiAccess((accessToken) => westronApi.updatePresence(inGame, accessToken));
+  return withWestronApiAccess((accessToken) =>
+    westronApi.updatePresence(inGame, accessToken, serverName));
 }
 
 async function westronSendEphemeralMessage({ recipientUserId, body }) {
@@ -525,6 +691,76 @@ async function westronSendEphemeralMessage({ recipientUserId, body }) {
 
 async function westronListEphemeralMessages() {
   return withWestronApiAccess((accessToken) => westronApi.listEphemeralMessages(accessToken));
+}
+
+async function westronListConversation({ friendUserId }) {
+  if (typeof friendUserId !== 'string' || !friendUserId.trim() || friendUserId.length > 64) {
+    throw new Error('Arkadaş hesabı geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.listConversation(friendUserId, accessToken));
+}
+
+async function westronGetMessagePhoto({ messageId }) {
+  if (typeof messageId !== 'string' || !/^[0-9a-f-]{36}$/i.test(messageId)) {
+    throw new Error('Mesaj kimliği geçersiz.');
+  }
+  return withWestronApiAccess((accessToken) => westronApi.getMessagePhoto(messageId, accessToken));
+}
+
+async function westronRecallMessage({ messageId, groupId }) {
+  if (typeof messageId !== 'string' || !/^[0-9a-f-]{36}$/i.test(messageId)) {
+    throw new Error('Mesaj kimliği geçersiz.');
+  }
+  if (groupId !== undefined) {
+    if (typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId)) {
+      throw new Error('Grup kimliği geçersiz.');
+    }
+    return withWestronApiAccess((accessToken) =>
+      westronApi.recallGroupMessage(groupId, messageId, accessToken));
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.recallEphemeralMessage(messageId, accessToken));
+}
+
+async function westronSendPhotoMessage({ recipientUserId, filePath, fileName, fileBuffer }) {
+  if (typeof recipientUserId !== 'string' || !recipientUserId.trim() || recipientUserId.length > 64) {
+    throw new Error('Arkadaş hesabı geçersiz.');
+  }
+  if (!Buffer.isBuffer(fileBuffer) && (typeof filePath !== 'string' || !filePath.trim())) {
+    throw new Error('Fotoğraf dosyası seçilmedi.');
+  }
+  const uploadBuffer = Buffer.isBuffer(fileBuffer) ? fileBuffer : await fs.readFile(filePath);
+  const uploadName = typeof fileName === 'string' ? fileName : path.basename(filePath);
+  if (!/\.(png|jpe?g)$/i.test(uploadName)) throw new Error('Fotoğraf biçimi desteklenmiyor.');
+  if (uploadBuffer.length > 10 * 1024 * 1024) {
+    throw new Error('Fotoğraf 10 MiB sınırını aşamaz.');
+  }
+  return withWestronApiAccess((accessToken) =>
+    westronApi.sendPhotoMessage(recipientUserId, uploadName, uploadBuffer, accessToken));
+}
+
+async function prepareWestronScreenshot(filePath) {
+  const image = nativeImage.createFromPath(filePath);
+  if (image.isEmpty()) throw new Error('Ekran görüntüsü okunamadı.');
+  const { width, height } = image.getSize();
+  if (width < 1 || height < 1) throw new Error('Ekran görüntüsü boyutları geçersiz.');
+  const scale = Math.min(1, 1600 / Math.max(width, height));
+  const resized = scale < 1
+    ? image.resize({
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale)),
+      quality: 'good',
+    })
+    : image;
+  const fileBuffer = resized.toJPEG(82);
+  if (fileBuffer.length > 10 * 1024 * 1024) {
+    throw new Error('Sıkıştırılmış ekran görüntüsü 10 MiB sınırını aşıyor.');
+  }
+  return {
+    fileName: `${path.parse(filePath).name}.jpg`,
+    fileBuffer,
+  };
 }
 
 async function westronConsumeEphemeralMessage({ messageId }) {
@@ -541,9 +777,10 @@ async function westronGetVoiceCallIceServers() {
 async function westronSendVoiceCallSignal(signal) {
   if (!signal || typeof signal !== 'object' || Array.isArray(signal)
     || typeof signal.recipientUserId !== 'string'
+    || (signal.groupId !== undefined && (typeof signal.groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(signal.groupId)))
     || typeof signal.callId !== 'string'
     || !/^[0-9a-f-]{36}$/i.test(signal.callId)
-    || !['offer', 'answer', 'hangup', 'reject'].includes(signal.type)
+    || !['offer', 'answer', 'candidate', 'hangup', 'reject'].includes(signal.type)
     || typeof signal.sdp !== 'string' || signal.sdp.length > 60_000) {
     throw new Error('Sesli arama sinyali geçersiz.');
   }
@@ -609,18 +846,19 @@ async function westronUploadSkin(model) {
 }
 
 
-async function westronUploadCape() {
+async function westronUploadBackTexture(type) {
   const credentials = await readWestronAuth();
   if (!credentials) throw new Error('Önce Westron hesabınızla giriş yapın.');
+  const label = type === 'cape' ? 'Pelerin' : 'Elitra';
   const selection = await dialog.showOpenDialog({
-    title: 'PNG pelerin dosyasını seç',
+    title: `PNG ${label.toLowerCase()} dosyasını seç`,
     properties: ['openFile'],
-    filters: [{ name: 'PNG pelerin', extensions: ['png'] }],
+    filters: [{ name: `PNG ${label.toLowerCase()}`, extensions: ['png'] }],
   });
   if (selection.canceled || !selection.filePaths[0]) return { cancelled: true };
   const filePath = selection.filePaths[0];
   const fileBuffer = await fs.readFile(filePath);
-  if (fileBuffer.length > 1024 * 1024) throw new Error('Pelerin PNG dosyası 1 MiB sınırını aşamaz.');
+  if (fileBuffer.length > 1024 * 1024) throw new Error(`${label} PNG dosyası 1 MiB sınırını aşamaz.`);
   let accessToken = credentials.accessToken;
   let profile = await westronApi.getProfile(accessToken).catch(async (error) => {
     if (error.status !== 401) throw error;
@@ -630,9 +868,9 @@ async function westronUploadCape() {
   });
   const upload = () => {
     const form = new FormData();
-    form.append('cape', new Blob([fileBuffer], { type: 'image/png' }), path.basename(filePath));
-    return westronApi.request('/api/v1/me/cape', {
-      method: profile?.cape ? 'PUT' : 'POST',
+    form.append(type, new Blob([fileBuffer], { type: 'image/png' }), path.basename(filePath));
+    return westronApi.request(`/api/v1/me/${type}`, {
+      method: profile?.[type] ? 'PUT' : 'POST',
       body: form,
       accessToken,
     });
@@ -649,11 +887,19 @@ async function westronUploadCape() {
   }
 }
 
-async function westronDeleteCape() {
+async function westronUploadCape() {
+  return westronUploadBackTexture('cape');
+}
+
+async function westronUploadElytra() {
+  return westronUploadBackTexture('elytra');
+}
+
+async function westronDeleteBackTexture(type) {
   const credentials = await readWestronAuth();
   if (!credentials) throw new Error('Önce Westron hesabınızla giriş yapın.');
   let accessToken = credentials.accessToken;
-  const del = () => westronApi.request('/api/v1/me/cape', {
+  const del = () => westronApi.request(`/api/v1/me/${type}`, {
     method: 'DELETE',
     accessToken,
   });
@@ -667,6 +913,14 @@ async function westronDeleteCape() {
     await del();
     return westronGetProfile();
   }
+}
+
+async function westronDeleteCape() {
+  return westronDeleteBackTexture('cape');
+}
+
+async function westronDeleteElytra() {
+  return westronDeleteBackTexture('elytra');
 }
 
 async function westronDeleteSkin() {
@@ -740,7 +994,6 @@ async function getState() {
   const loader = customProfile?.loader ?? settings.loader;
   const gameDirectory = customProfile?.directory ?? getInstanceDir(settings.minecraftDir, gameVersion, loader);
   const performanceProfile = await readPerformanceProfile(gameDirectory);
-  syncNativeTitleBar(settings.theme, performanceProfile.mode, nativePerformanceThemeEnabled);
   let loaderInstalled = false;
   try {
     const versions = await fs.readdir(path.join(gameDirectory, 'versions'));
@@ -1542,27 +1795,168 @@ async function installModrinthPack(type, projectId, gameVersion, selectedVersion
   };
 }
 
-function syncNativeTitleBar(theme, performanceMode = 'default', performanceThemeEnabled = true) {
-  if (process.platform !== 'win32') return;
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) {
-      window.setTitleBarOverlay(getTitleBarOverlayOptions(theme, performanceMode, performanceThemeEnabled));
-    }
+function broadcastVoiceCallWindowState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('app:voice-call-window-state', {
+    open: Boolean(voiceCallWindow && !voiceCallWindow.isDestroyed()),
+    visible: Boolean(voiceCallWindow && !voiceCallWindow.isDestroyed()
+      && !voiceCallWindow.isMinimized() && voiceCallWindow.isVisible()),
+    minimized: Boolean(voiceCallWindow && !voiceCallWindow.isDestroyed() && voiceCallWindow.isMinimized()),
+    opening: Boolean(voiceCallWindow && !voiceCallWindow.isDestroyed() && !voiceCallWindowReady),
+  });
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function closeVoiceCallWindow() {
+  const window = voiceCallWindow;
+  if (!window || window.isDestroyed()) {
+    voiceCallWindow = null;
+    voiceCallWindowReady = false;
+    broadcastVoiceCallWindowState();
+    return;
   }
+  isClosingVoiceCallWindow = true;
+  window.close();
+  isClosingVoiceCallWindow = false;
+}
+
+function updateVoiceCallWindowState(input, participants) {
+  const call = input?.call && typeof input.call === 'object' ? input.call : {};
+  const activeCall = participants.length > 0 && call.incoming !== true;
+  const safeLabel = (value) => typeof value === 'string' ? value.slice(0, 100) : '';
+  const safeImageUrl = (value) => {
+    if (typeof value !== 'string') return '';
+    try {
+      const url = new URL(value);
+      return ['https:', 'http:'].includes(url.protocol) ? url.href.slice(0, 2048) : '';
+    } catch {
+      return '';
+    }
+  };
+  voiceCallWindowState = {
+    active: activeCall,
+    incoming: call.incoming === true,
+    self: safeLabel(call.self),
+    selfSkinUrl: safeImageUrl(call.selfSkinUrl),
+    selfSpeaking: call.selfSpeaking === true,
+    friend: safeLabel(call.friend),
+    status: safeLabel(call.status),
+    avatarShape: call.avatarShape === 'square' ? 'square' : 'round',
+    friendSkinUrl: safeImageUrl(call.friendSkinUrl),
+    groupParticipants: Array.isArray(call.groupParticipants)
+      ? call.groupParticipants.slice(0, 15).map((participant) => ({
+        username: safeLabel(participant?.username),
+        skinUrl: safeImageUrl(participant?.skinUrl),
+        connected: participant?.connected === true,
+        speaking: participant?.speaking === true,
+        microphoneMuted: participant?.microphoneMuted === true,
+        speakerMuted: participant?.speakerMuted === true,
+      })).filter((participant) => participant.username)
+      : [],
+    microphoneMuted: call.microphoneMuted === true,
+    remoteAudioMuted: call.remoteAudioMuted === true,
+    friendMicrophoneMuted: call.friendMicrophoneMuted === true,
+    friendSpeakerMuted: call.friendSpeakerMuted === true,
+    canAddParticipant: call.canAddParticipant === true,
+    speaking: Array.isArray(input?.speaking) && input.speaking.includes(safeLabel(call.friend)),
+    labels: call.labels && typeof call.labels === 'object'
+      ? Object.fromEntries(Object.entries(call.labels).map(([key, value]) => [key, safeLabel(value)]))
+      : {},
+  };
+  if (!activeCall) {
+    closeVoiceCallWindow();
+    if (mainWindowHiddenForVoiceCall) {
+      mainWindowHiddenForVoiceCall = false;
+      showMainWindow();
+    }
+    return;
+  }
+  if (!voiceCallWindow || voiceCallWindow.isDestroyed()) {
+    voiceCallWindowReady = false;
+    voiceCallWindow = new BrowserWindow({
+      width: 760,
+      height: 500,
+      minWidth: 560,
+      minHeight: 420,
+      frame: false,
+      show: false,
+      alwaysOnTop: true,
+      backgroundColor: '#0b0d11',
+      title: 'Westron Voice Call',
+      icon: process.platform === 'win32'
+        ? (app.isPackaged
+          ? path.join(process.resourcesPath, 'westron-launcher.ico')
+          : path.join(__dirname, '..', 'build', 'westron-launcher.ico'))
+        : undefined,
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'voice-call-preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    const window = voiceCallWindow;
+    window.webContents.on('preload-error', (_event, preloadPath, error) => {
+      console.error(`Voice call preload failed (${path.basename(preloadPath)}): ${error.message}`);
+    });
+    window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+      console.error(`Voice call window navigation failed (${errorCode}): ${errorDescription}; ${validatedURL}`);
+    });
+    window.webContents.on('console-message', (details) => {
+      if (details.level === 'error') {
+        console.error(`Voice call renderer error (${path.basename(details.sourceId)}:${details.lineNumber}): ${details.message}`);
+      }
+    });
+    window.webContents.on('did-finish-load', () => {
+      if (voiceCallWindowState && !window.isDestroyed()) {
+        window.webContents.send('app:voice-call-state', voiceCallWindowState);
+      }
+    });
+    window.on('minimize', broadcastVoiceCallWindowState);
+    window.on('restore', broadcastVoiceCallWindowState);
+    window.on('show', broadcastVoiceCallWindowState);
+    window.on('hide', broadcastVoiceCallWindowState);
+    window.on('close', (event) => {
+      if (isClosingVoiceCallWindow || appIsQuitting) return;
+      event.preventDefault();
+      window.hide();
+      if (mainWindowHiddenForVoiceCall) showMainWindow();
+    });
+    window.on('closed', () => {
+      if (voiceCallWindow === window) {
+        voiceCallWindow = null;
+        voiceCallWindowReady = false;
+      }
+      broadcastVoiceCallWindowState();
+    });
+    window.loadFile(path.join(__dirname, 'voice-call.html')).catch((error) => {
+      console.error(`Could not load the voice call window: ${error.message}`);
+    });
+    window.once('ready-to-show', () => {
+      voiceCallWindowReady = true;
+      if (!window.isDestroyed() && voiceCallWindowState?.active) window.show();
+      broadcastVoiceCallWindowState();
+    });
+  } else if (!voiceCallWindow.webContents.isLoading()) {
+    voiceCallWindow.webContents.send('app:voice-call-state', voiceCallWindowState);
+  }
+  broadcastVoiceCallWindowState();
 }
 
 function createWindow() {
-  const useNativeTitleBar = process.platform === 'win32';
-  const window = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 320,
     minHeight: 240,
-    frame: useNativeTitleBar,
-    ...(useNativeTitleBar ? {
-      titleBarStyle: 'hidden',
-      titleBarOverlay: getTitleBarOverlayOptions('dark', 'default', true),
-    } : {}),
+    frame: false,
     backgroundColor: '#0b0d11',
     title: 'Westron Launcher',
     icon: process.platform === 'win32'
@@ -1578,6 +1972,7 @@ function createWindow() {
       sandbox: true,
     },
   });
+  const window = mainWindow;
   window.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Electron preload failed (${path.basename(preloadPath)}): ${error.message}`);
   });
@@ -1589,11 +1984,18 @@ function createWindow() {
   });
   window.webContents.on('console-message', (details) => {
     if (details.level === 'error') {
-      console.error(`Renderer console error (${path.basename(details.sourceId)}:${details.lineNumber}).`);
+      console.error(`Renderer console error (${path.basename(details.sourceId)}:${details.lineNumber}): ${details.message}`);
     }
   });
   window.webContents.on('did-finish-load', () => {
     window.webContents.send('app:update-status', updateStatus);
+  });
+  window.on('close', (event) => {
+    if (voiceCallActive && !appIsQuitting) {
+      event.preventDefault();
+      mainWindowHiddenForVoiceCall = true;
+      window.hide();
+    }
   });
   window.setMenuBarVisibility(false);
   if (process.env.NODE_ENV === 'development') {
@@ -1644,6 +2046,48 @@ ipcMain.handle('app:window-control', (event, action) => {
     return;
   }
   throw new Error('Pencere işlemi geçersiz.');
+});
+ipcMain.handle('app:show-westron-voice-call-window', (event) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) {
+    throw new Error('Sesli arama penceresi bu uygulama penceresinden açılamaz.');
+  }
+  if (!voiceCallWindow || voiceCallWindow.isDestroyed()) {
+    throw new Error('Açık bir sesli arama bulunmuyor.');
+  }
+  if (voiceCallWindow.isMinimized()) voiceCallWindow.restore();
+  voiceCallWindow.show();
+  voiceCallWindow.focus();
+  broadcastVoiceCallWindowState();
+});
+ipcMain.handle('app:voice-call-window-control', (event, action) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== voiceCallWindow) {
+    throw new Error('Sesli arama penceresi artık kullanılamıyor.');
+  }
+  if (action === 'minimize') {
+    voiceCallWindow.minimize();
+    return;
+  }
+  if (action === 'show-main') {
+    showMainWindow();
+    return;
+  }
+  throw new Error('Sesli arama penceresi işlemi geçersiz.');
+});
+ipcMain.handle('app:voice-call-action', (event, action) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== voiceCallWindow) {
+    throw new Error('Sesli arama penceresi artık kullanılamıyor.');
+  }
+  if (!['accept', 'reject', 'end', 'toggle-microphone', 'toggle-speaker', 'add-participant'].includes(action)) {
+    throw new Error('Sesli arama işlemi geçersiz.');
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    throw new Error('Westron Launcher penceresi artık kullanılamıyor.');
+  }
+  if (action === 'add-participant') {
+    voiceCallWindow.hide();
+    showMainWindow();
+  }
+  mainWindow.webContents.send('app:voice-call-action', action);
 });
 ipcMain.handle('app:choose-minecraft-dir', async () => {
   const settings = await readSettings();
@@ -1702,8 +2146,6 @@ ipcMain.handle('app:set-title-bar-theme', (_event, theme, performanceMode, perfo
   if (typeof performanceThemeEnabled !== 'boolean') {
     throw new Error('Performans teması seçimi geçersiz.');
   }
-  nativePerformanceThemeEnabled = performanceThemeEnabled;
-  syncNativeTitleBar(theme, performanceMode, performanceThemeEnabled);
 });
 ipcMain.handle('app:select-custom-profile', async (_event, profileId) => {
   if (profileId !== null && typeof profileId !== 'string') {
@@ -2024,6 +2466,118 @@ ipcMain.handle('app:open-screenshots-folder', async () => {
   const error = await shell.openPath(directory);
   if (error) throw new Error(`Ekran görüntüsü klasörü açılamadı: ${error}`);
 });
+ipcMain.handle('app:download-screenshot', async (_event, fileName) => {
+  const { gameDirectory } = await getState();
+  const sourcePath = resolveScreenshotPath(gameDirectory, fileName);
+  const destination = path.join(app.getPath('downloads'), fileName);
+  await fs.copyFile(sourcePath, destination);
+  return { cancelled: false, path: destination };
+});
+ipcMain.handle('app:choose-send-westron-photo', async (_event, input) => {
+  const selection = await dialog.showOpenDialog({
+    title: 'Tek kullanımlık fotoğraf seç',
+    properties: ['openFile'],
+    filters: [{ name: 'PNG fotoğraf', extensions: ['png', 'jpg', 'jpeg'] }],
+  });
+  if (selection.canceled || !selection.filePaths[0]) return { cancelled: true };
+  return westronSendPhotoMessage({
+    recipientUserId: input?.recipientUserId,
+    filePath: selection.filePaths[0],
+  }).then((result) => ({ cancelled: false, ...result }));
+});
+ipcMain.handle('app:share-screenshot-to-friends', async (_event, input) => {
+  if (!Array.isArray(input?.recipientUserIds) || input.recipientUserIds.length === 0) {
+    throw new Error('Gönderilecek arkadaş seçilmedi.');
+  }
+  if (input.recipientUserIds.some((userId) =>
+    typeof userId !== 'string' || !userId.trim() || userId.length > 64)) {
+    throw new Error('Arkadaş hesap bilgisi geçersiz.');
+  }
+  const { gameDirectory } = await getState();
+  const filePath = resolveScreenshotPath(gameDirectory, input.fileName);
+  await fs.stat(filePath);
+  const screenshot = await prepareWestronScreenshot(filePath);
+  const recipientUserIds = [...new Set(input.recipientUserIds)];
+  for (let index = 0; index < recipientUserIds.length; index += 3) {
+    await Promise.all(recipientUserIds.slice(index, index + 3).map((recipientUserId) =>
+      westronSendPhotoMessage({ recipientUserId, ...screenshot })));
+  }
+  return { sent: true };
+});
+ipcMain.handle('app:share-screenshot-to-groups', async (_event, input) => {
+  if (!Array.isArray(input?.groupIds) || input.groupIds.length === 0
+    || input.groupIds.some((groupId) => typeof groupId !== 'string' || !/^[0-9a-f-]{36}$/i.test(groupId))) {
+    throw new Error('Gönderilecek grup seçilmedi veya grup bilgisi geçersiz.');
+  }
+  const { gameDirectory } = await getState();
+  const filePath = resolveScreenshotPath(gameDirectory, input.fileName);
+  await fs.stat(filePath);
+  const screenshot = await prepareWestronScreenshot(filePath);
+  const groupIds = [...new Set(input.groupIds)];
+  for (let index = 0; index < groupIds.length; index += 3) {
+    await Promise.all(groupIds.slice(index, index + 3).map((groupId) =>
+      westronSendGroupPhoto({ groupId, ...screenshot })));
+  }
+  return { sent: true };
+});
+ipcMain.handle('app:westron-recall-message', async (_event, input) => westronRecallMessage(input));
+ipcMain.handle('app:update-westron-voice-overlay', async (_event, input) => {
+  if (!input || !Array.isArray(input.participants)
+    || input.participants.some((participant) => typeof participant !== 'string')) {
+    throw new Error('Sesli arama katılımcıları geçersiz.');
+  }
+  const participants = input.participants.slice(0, 16).map((participant) => participant.slice(0, 64));
+  const speaking = Array.isArray(input.speaking)
+    ? input.speaking.filter((participant) => typeof participant === 'string').slice(0, 16)
+    : [];
+  voiceCallActive = participants.length > 0 && input?.call?.incoming !== true;
+  updateVoiceCallWindowState(input, participants);
+  const { gameDirectory } = await getState();
+  const overlayDirectory = path.join(gameDirectory, 'westron-voice');
+  await fs.mkdir(overlayDirectory, { recursive: true });
+  await fs.writeFile(path.join(overlayDirectory, 'overlay.json'), JSON.stringify({
+    enabled: input?.enabled === true,
+    participants,
+    speaking,
+  }), 'utf8');
+});
+ipcMain.handle('app:play-westron-notification', (_event, kind) => {
+  if (process.platform === 'win32') {
+    shell.beep();
+  }
+  return { played: true };
+});
+ipcMain.handle('app:show-westron-notification', (_event, input) => {
+  if (!input || typeof input.sender !== 'string' || input.sender.length > 64
+    || typeof input.message !== 'string' || input.message.length > 180
+    || (input.notificationId !== undefined
+      && (typeof input.notificationId !== 'string' || input.notificationId.length > 128))) {
+    throw new Error('Westron bildirimi geçersiz.');
+  }
+  if (!Notification.isSupported()) return { shown: false };
+  const notification = new Notification({
+    title: 'Westron Launcher',
+    body: `${input.sender}: ${input.message}`,
+    silent: true,
+  });
+  notification.on('click', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('app:open-friends', input.notificationId ?? null);
+  });
+  notification.show();
+  return { shown: true };
+});
+ipcMain.handle('app:get-minecraft-skin-url', async (_event, input) => {
+  try {
+    return await getMinecraftSkinUrl(input?.username);
+  } catch (error) {
+    console.warn(`Minecraft skin lookup failed: ${error.message}`);
+    return null;
+  }
+});
 registerWestronIpcHandlers(ipcMain, {
   getAccount: async () => {
     const credentials = await readWestronAuth();
@@ -2040,14 +2594,30 @@ registerWestronIpcHandlers(ipcMain, {
   deleteSkin: westronDeleteSkin,
   uploadCape: westronUploadCape,
   deleteCape: westronDeleteCape,
+  uploadElytra: westronUploadElytra,
+  deleteElytra: westronDeleteElytra,
   logout: westronLogout,
   listFriends: westronListFriends,
+  getFriendSkinUrl: westronGetFriendSkinUrl,
+  searchFriends: westronSearchFriends,
   sendFriendRequest: westronSendFriendRequest,
   respondFriendRequest: westronRespondToFriendRequest,
+  cancelFriendRequest: westronCancelFriendRequest,
   removeFriend: westronRemoveFriend,
+  listGroups: westronListGroups,
+  createGroup: westronCreateGroup,
+  renameGroup: westronRenameGroup,
+  deleteGroup: westronDeleteGroup,
+  removeGroupMember: westronRemoveGroupMember,
+  listGroupConversation: westronListGroupConversation,
+  sendGroupMessage: westronSendGroupMessage,
+  getGroupMessagePhoto: westronGetGroupMessagePhoto,
+  sendGroupPhoto: westronChooseAndSendGroupPhoto,
   updatePresence: westronUpdatePresence,
   sendEphemeralMessage: westronSendEphemeralMessage,
   listEphemeralMessages: westronListEphemeralMessages,
+  listConversation: westronListConversation,
+  getMessagePhoto: westronGetMessagePhoto,
   consumeEphemeralMessage: westronConsumeEphemeralMessage,
   getVoiceCallIceServers: westronGetVoiceCallIceServers,
   sendVoiceCallSignal: westronSendVoiceCallSignal,
@@ -2131,6 +2701,10 @@ function setupApplicationMenu() {
   }
 }
 
+app.on('before-quit', () => {
+  appIsQuitting = true;
+});
+
 app.whenReady().then(() => {
   setupMediaPermissions();
   setupApplicationMenu();
@@ -2140,7 +2714,8 @@ app.whenReady().then(() => {
     setTimeout(() => { void checkForUpdates(); }, 5000);
   }
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    else showMainWindow();
   });
 });
 

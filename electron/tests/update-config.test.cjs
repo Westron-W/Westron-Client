@@ -88,6 +88,7 @@ test('Windows updater uses a hidden generic feed and releases show only installe
   const appCode = fs.readFileSync('src/App.tsx', 'utf8');
   assert.match(appCode, /className="window-controls"/);
   assert.match(appCode, /className="topbar-right"/);
+  assert.match(appCode, /className="topbar-right">[\s\S]*className="top-version"[\s\S]*className="topbar-profile"/);
   assert.match(appCode, /label={text\('Westron Launcher Modu'\)}/);
   assert.match(appCode, /function PerformanceModesPage/);
   const launcherMainCode = fs.readFileSync('electron/main.cjs', 'utf8');
@@ -95,8 +96,16 @@ test('Windows updater uses a hidden generic feed and releases show only installe
   assert.match(appCode, /<p>\{status\.message \? t\(status\.message\) : ''\}<\/p>/);
 
   const appStyles = fs.readFileSync('src/styles.css', 'utf8');
-  assert.match(appStyles, /\.topbar-right \{ position: absolute;/);
-  assert.match(appStyles, /\.window-controls \{ position: fixed;/);
+  assert.match(appStyles, /\.topbar \{ position: sticky;[^}]*-webkit-app-region: drag;/);
+  assert.match(appStyles, /\.topbar-right \{ position: absolute;[^}]*top: 8px;[^}]*right: 132px;/);
+  assert.match(appStyles, /@media \(min-width: 621px\) \{\s*\.topbar-right \{ top: 40px; right: 12px; \}\s*\.topbar-right \.topbar-profile \{ transform: translateY\(-2px\); \}\s*\}/);
+  assert.doesNotMatch(appStyles, /\.topbar-profile \.skin-face-overlay \{ display: none; \}/);
+  assert.match(appStyles, /\.friends-call-mute-badges \{[^}]*right: -20px;/);
+  assert.match(appStyles, /\.friends-call-control\.is-muted::after \{[^}]*background: #f04e5d;/);
+  assert.match(appStyles, /\.window-controls \{ position: absolute;[^}]*top: 0; right: 0;/);
+  assert.match(appStyles, /\.window-controls, \.window-controls \* \{ -webkit-app-region: no-drag; \}/);
+  assert.match(appStyles, /\.window-controls button \{[^}]*width: 42px; height: 40px;/);
+  assert.match(appStyles, /\.window-controls button \{[^}]*background: transparent !important;/);
 });
 
 test('macOS packages have isolated output and include the shared Fabric client mod', () => {

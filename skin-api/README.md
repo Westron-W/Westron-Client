@@ -21,23 +21,34 @@ Fastify tabanlı, mevcut web sitesinden ve Microsoft/Minecraft girişinden ayrı
 | `POST` | `/api/v1/friends/requests/{requestId}/respond` | Gelen isteği kabul eder veya reddeder |
 | `DELETE` | `/api/v1/friends/{friendUserId}` | Arkadaşı kaldırır; bekleyen mesaj ve arama sinyallerini siler |
 | `POST` | `/api/v1/presence` | Launcher'ın çevrimiçi/oyunda durumunu günceller |
-| `POST` / `GET` | `/api/v1/friends/messages` ve `/inbox` | Arkadaşa tek sefer açılabilen mesaj gönderir; liste yalnızca mesaj özetlerini verir |
+| `POST` / `GET` | `/api/v1/friends/messages` ve `/inbox` | Arkadaşa tek sefer açılabilen mesaj veya 30 gün saklanan fotoğraf gönderir |
 | `POST` | `/api/v1/friends/messages/{messageId}/consume` | Mesajı alıcı için atomik olarak okur ve siler |
+| `POST` | `/api/v1/friends/messages/{messageId}/recall` | Gönderenin mesajı geri almasını sağlar; eski `DELETE` yolu da desteklenir |
+| `GET` / `POST` | `/api/v1/friends/groups` | Arkadaş gruplarını listeler veya yeni grup oluşturur |
+| `DELETE` | `/api/v1/friends/groups/{groupId}` | Yalnızca grup sahibi grubu, mesajlarını, fotoğraflarını ve bekleyen arama sinyallerini siler |
+| `PATCH` | `/api/v1/friends/groups/{groupId}` | Grubu yalnızca oluşturan kişinin yeniden adlandırmasını sağlar |
+| `DELETE` | `/api/v1/friends/groups/{groupId}/members/{memberUserId}` | Grup sahibinin üyeyi çıkarmasını veya kullanıcının gruptan ayrılmasını sağlar |
+| `GET` / `POST` | `/api/v1/friends/groups/{groupId}/messages` | Kalıcı grup mesajlarını listeler veya gönderir |
+| `POST` | `/api/v1/friends/groups/{groupId}/messages/{messageId}/recall` | Mesajı yalnızca gönderen grup üyesinin geri almasını sağlar |
+| `POST` | `/api/v1/friends/groups/{groupId}/messages/photo` | Grup üyelerine kalıcı fotoğraf mesajı gönderir |
+| `GET` | `/api/v1/friends/groups/{groupId}/messages/{messageId}/photo` | Grup fotoğrafını yalnızca grup üyelerine verir; fotoğraf 30 gün tutulur |
 | `GET` | `/api/v1/friends/calls/ice-servers` | WebRTC ses araması için STUN/TURN sunucu ayarlarını verir |
-| `POST` / `GET` | `/api/v1/friends/calls/signals` | Arkadaşlar arası kısa ömürlü WebRTC arama sinyallerini iletir |
+| `POST` / `GET` | `/api/v1/friends/calls/signals` | Arkadaş ve grup üyeleri arasındaki kısa ömürlü WebRTC arama sinyallerini iletir |
 | `PUT` | `/api/v1/me/minecraft-profile` | Minecraft oyun adını Westron profiline bağlar |
 | `POST` / `PUT` / `DELETE` | `/api/v1/me/skin` | İlk skin yükleme / değiştirme / silme |
 | `POST` / `PUT` / `DELETE` | `/api/v1/me/cape` | Pelerin yükleme / değiştirme / silme |
-| `GET` | `/api/v1/profiles/{username}` | Herkese açık oyuncu profili ve skin modeli |
+| `POST` / `PUT` / `DELETE` | `/api/v1/me/elytra` | Elitra dokusu yükleme / değiştirme / silme |
+| `GET` | `/api/v1/profiles/{username}` | Herkese açık oyuncu profili, skin modeli, pelerin ve elitra |
 | `GET` | `/api/v1/profiles/{username}/skin.png` | Herkese açık PNG skin; ETag cache desteği |
 | `GET` | `/api/v1/profiles/{username}/cape.png` | Herkese açık PNG pelerin; ETag cache desteği |
+| `GET` | `/api/v1/profiles/{username}/elytra.png` | Herkese açık PNG elitra dokusu; ETag cache desteği |
 | `GET` | `/api/openapi.yaml` | Gerçek route'larla eşleştirilmiş OpenAPI 3.1 |
 
 Skin istekleri multipart/form-data içindeki `skin` alanıyla yüklenir. PNG imzası ve içerik dekoderi kontrol edilir; yalnızca 64x64 veya 64x32 piksel ve en fazla 1 MiB kabul edilir. `X-Skin-Model` isteğe bağlı `classic`/`slim` başlığıdır. Hesap parolaları Argon2id, e-posta doğrulama/parola sıfırlama kodları yalnızca SHA-256 özetiyle tutulur. Access ve refresh token'lar da veritabanında yalnızca hash olarak saklanır; refresh token rotasyonu eski token tekrar kullanımında oturumu iptal eder.
 
-Herkese açık skin ve pelerin PNG uç noktaları WebGL tabanlı 3D önizleyicilerin dokuları canvas'a yükleyebilmesi için `Access-Control-Allow-Origin: *` döndürür; bu yalnızca herkese açık salt-okunur görsel rotalarına uygulanır.
+Pelerin ve elitra yüklemeleri `cape` / `elytra` multipart alanında 64x32 veya 2:1 oranında PNG ve en fazla 1 MiB kabul eder. Herkese açık skin, pelerin ve elitra PNG uç noktaları WebGL tabanlı 3D önizleyicilerin dokuları canvas'a yükleyebilmesi için `Access-Control-Allow-Origin: *` döndürür; bu yalnızca herkese açık salt-okunur görsel rotalarına uygulanır.
 
-Arkadaşlık ve sosyal rotalar doğrulanmış Westron hesabı gerektirir. Çevrimiçi durumu 45 saniyelik heartbeat ile belirlenir; heartbeat kesilirse kullanıcı çevrimdışı görünür. Gelen mesaj listesinde içerik bulunmaz: alıcı mesajı ilk kez açtığında içerik tek bir veritabanı işlemiyle döndürülüp silinir; açılmayan mesajlar 7 gün sonra silinir. Arama sinyalleri 60 saniye sonra zaman aşımına uğrar.
+Arkadaşlık ve sosyal rotalar doğrulanmış Westron hesabı gerektirir. Çevrimiçi durumu 45 saniyelik heartbeat ile belirlenir; heartbeat kesilirse kullanıcı çevrimdışı görünür. Gelen mesaj listesinde içerik bulunmaz: alıcı mesajı ilk kez açtığında içerik tek bir veritabanı işlemiyle döndürülüp silinir; açılmayan mesajlar 7 gün sonra silinir. Grup mesajları sohbet geçmişinde saklanır ve yalnızca üyelerince okunabilir. Grup fotoğrafları PNG olarak normalize edilip kalıcı saklanır; indirme erişimi grup üyeleriyle sınırlandırılır. Grup adını oluşturan kişi değiştirebilir; grup sahibi üye çıkarabilir. Arama sinyalleri 60 saniye sonra zaman aşımına uğrar.
 
 Sesli aramalar WebRTC kullanır. `STUN_SERVER_URLS` virgülle ayrılmış STUN URL'lerini alır; ayarlanmazsa varsayılan olarak `stun:stun.l.google.com:19302` kullanılır. Daha fazla ağda bağlantı için `TURN_SERVER_URLS`, `TURN_SERVER_USERNAME` ve `TURN_SERVER_CREDENTIAL` değerlerinin üçünü de sunucu ortamında ayarlayın; TURN sunucusu/kimlik bilgileri bu depoda sağlanmaz. TURN kimlik bilgisi launcher'a gömülmez, yalnızca kimliği doğrulanmış ICE ayar isteğine gönderilir; üretimde kısa ömürlü, düzenli yenilenen TURN kimlik bilgileri önerilir. STUN/TURN yapılandırılmadan, kısıtlı NAT veya güvenlik duvarı arkasındaki kullanıcılar arasında arama garanti edilemez.
 
@@ -58,11 +69,11 @@ Copy-Item .\skin-api\.env.example .\skin-api\.env
 npm.cmd --prefix .\skin-api start
 ```
 
-`SMTP_PASSWORD` Gmail uygulama şifresidir ve yalnızca sunucu ortamında bulunmalıdır. `.env` ve `.env.*` Git dışında tutulur; `.env.example` yalnızca örnek yer tutucular içerir. E-posta teslimi sınırlı sayıda yeniden denenir; SMTP hata mesajları veya kimlik bilgileri istemciye/loglara yazılmaz.
+`SMTP_PASSWORD` Gmail uygulama şifresidir ve yalnızca sunucu ortamında bulunmalıdır. Google'ın gruplar halinde gösterdiği uygulama şifresindeki boşluklar Gmail bağlantısı kurulurken otomatik kaldırılır. `.env` ve `.env.*` Git dışında tutulur; `.env.example` yalnızca örnek yer tutucular içerir. E-posta teslimi sınırlı sayıda yeniden denenir; SMTP hata mesajları veya kimlik bilgileri istemciye/loglara yazılmaz.
 
-## Ubuntu VDS Docker kurulumu — kullanıcı tarafından uygulanacak
+## Ubuntu VDS Docker kurulumu ve güvenli güncelleme
 
-VDS'ye, Docker'a veya Nginx Proxy Manager'a bu geliştirme sırasında erişilmedi; kurulum, mevcut yönlendirme ve portların gerçekten incelenmesi ve yedek alınması kullanıcı tarafından yapılmalıdır. Mevcut web sitesi, sertifika, Crafty ve container'ları silmeyin/değiştirmeyin.
+Canlı API `/opt/westron/skin-api` konumunda, `westron-skin-api` Compose servisi olarak çalışır ve mevcut Nginx Proxy Manager ağına bağlıdır. 2026-11-22 dağıtımında API şeması 12'den 14'e yükseltildi; `/api/health`, POST mesaj geri alma ve grup araması sinyal rotaları doğrulandı. Dağıtım öncesi SQLite online yedeği `/data/db/skin-api.sqlite.pre-v14-20261122T123037Z`, kaynak yedeği ise `/home/ubuntu/westron-backups/skin-api-pre-v14-20261122T123037Z.tar.gz` konumunda bulunur. Önceki şema 12 yedekleri de geri dönüş için korunmuştur. Bu yönergeler sonraki kurulum/güncellemeler içindir. Mevcut web sitesi, sertifika, Crafty ve ilgisiz container'ları silmeyin/değiştirmeyin.
 
 1. VDS'de mevcut container, port ve ağ durumunu salt okunur şekilde kaydedin; mevcut web site/NPM konfigürasyonunu yedekleyin:
 
@@ -109,7 +120,7 @@ Güncelleme kurulum dosyaları büyük olduğundan API sunucusu en fazla 90 daki
 
 ### Arkadaşlar özelliğinin sunucuya dağıtılması
 
-Launcher'daki arkadaşlık, presence, tek kullanımlık mesaj ve sesli arama özellikleri için sunucuda bu depodaki güncel `skin-api` kodu çalışmalıdır. API veritabanı açılışta otomatik olarak şema sürümü 5'e yükseltilir; mevcut `skin-api-data` volume'ünü koruyun. Sunucuya güncel kaynakları aktarıp API container'ını yeniden oluşturduktan sonra `/api/openapi.yaml` içinde `/api/v1/friends` ve `/api/v1/friends/calls/signals` yollarını, ardından `/api/health` yanıtını doğrulayın. TURN ayarlarını (`TURN_SERVER_URLS`, `TURN_SERVER_USERNAME`, `TURN_SERVER_CREDENTIAL`) yalnızca VDS ortamında yapılandırın. API dağıtılana kadar arkadaşlık ekranı uç nokta hatasını gösterebilir; launcher güncellemesi tek başına canlı API'yi değiştirmez.
+Launcher'daki arkadaşlık, presence, mesaj geri alma, grup sohbeti ve sesli arama özellikleri için sunucuda bu depodaki güncel `skin-api` kodu çalışmalıdır. API veritabanı açılışta otomatik olarak şema sürümü 14'e yükseltilir; mevcut `skin-api-data` volume'ünü koruyun. Fotoğraflar gönderimden itibaren 30 gün boyunca tekrar görüntülenebilir ve bu süre sonunda hem veritabanı kayıtları hem dosyaları temizlenir. Sunucuya güncel kaynakları aktarıp API container'ını yeniden oluşturduktan sonra `/api/openapi.yaml` içinde `/api/v1/friends/groups`, `/api/v1/friends/groups/{groupId}/messages/photo`, `/api/v1/friends/groups/{groupId}/messages/{messageId}/recall`, `/api/v1/friends/messages/{messageId}/recall` ve `/api/v1/friends/calls/signals` yollarını, ardından `/api/health` yanıtını doğrulayın. TURN ayarlarını (`TURN_SERVER_URLS`, `TURN_SERVER_USERNAME`, `TURN_SERVER_CREDENTIAL`) yalnızca VDS ortamında yapılandırın. API dağıtılana kadar arkadaşlık ekranı uç nokta hatası gösterebilir; launcher güncellemesi tek başına canlı API'yi değiştirmez.
 
 ### Pelerin yükleme 404 hatası
 

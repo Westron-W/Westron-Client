@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Westron Voice Call</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, "Segoe UI", sans-serif; background: #0b0d11; color: #f1f3f8; }
+      * { box-sizing: border-box; }
+      body { width: 100vw; height: 100vh; margin: 0; overflow: hidden; background: radial-gradient(ellipse at 50% 42%, #171a24 0%, #0b0d11 68%); }
+      .call-window { display: flex; width: 100%; height: 100%; flex-direction: column; border: 1px solid rgba(255,255,255,.09); border-radius: 12px; }
+      .titlebar { display: flex; height: 48px; flex: 0 0 48px; align-items: center; gap: 10px; padding: 0 12px 0 18px; border-bottom: 1px solid rgba(255,255,255,.08); -webkit-app-region: drag; }
+      .live-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #47d6aa; box-shadow: 0 0 10px rgba(71,214,170,.65); }
+      .call-title { min-width: 0; flex: 1; overflow: hidden; color: #aeb5c4; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .title-controls { display: flex; height: 100%; align-items: center; gap: 5px; -webkit-app-region: no-drag; }
+      button { display: inline-grid; min-width: 38px; height: 34px; place-items: center; padding: 0 10px; border: 1px solid transparent; border-radius: 8px; color: #c5cad5; background: transparent; cursor: pointer; font: inherit; transition: color .14s ease, border-color .14s ease, background-color .14s ease; }
+      button:hover { border-color: rgba(255,255,255,.1); color: #fff; background: rgba(255,255,255,.04); }
+      button:focus-visible { outline: 2px solid #a48aff; outline-offset: 2px; }
+      .icon-button { min-width: 34px; width: 34px; padding: 0; }
+      .end-top { color: #f08e95; }
+      .stage { display: flex; min-height: 0; flex: 1; align-items: center; justify-content: center; gap: clamp(32px, 8vw, 92px); padding: 26px; }
+      .participant { display: flex; width: min(36%, 220px); min-width: 150px; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+      .avatar { position: relative; display: grid; width: clamp(110px, 18vw, 164px); height: clamp(110px, 18vw, 164px); place-items: center; border: 1px solid rgba(164,138,255,.4); border-radius: 50%; color: #b7a3ff; background: linear-gradient(145deg, rgba(164,138,255,.18), rgba(164,138,255,.04)); box-shadow: 0 0 0 10px rgba(164,138,255,.035), 0 18px 48px rgba(0,0,0,.34); font-size: clamp(34px, 5vw, 56px); font-weight: 700; image-rendering: pixelated; overflow: visible; }
+      .face-clip { position: absolute; inset: 0; display: grid; overflow: hidden; place-items: center; border-radius: inherit; }
+      .face-clip > span { position: relative; z-index: 1; }
+      .group-participants { display: flex; width: 100%; max-height: 100%; flex-wrap: wrap; align-content: center; align-items: center; justify-content: center; gap: 18px; overflow: auto; }
+      .group-participant { display: flex; width: 120px; flex: 0 0 120px; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+      .group-participant .avatar { width: 76px; height: 76px; box-shadow: 0 0 0 5px rgba(164,138,255,.035), 0 12px 30px rgba(0,0,0,.28); font-size: 30px; }
+      .group-participant strong { max-width: 116px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .group-participant small { color: #9299a8; font-size: 10px; }
+      .avatar .skin-face { width: 100%; height: 100%; border-radius: inherit; image-rendering: pixelated; pointer-events: none; }
+      html[data-call-avatar-shape="square"] .avatar { border-radius: 6px; }
+      .avatar.self { border-color: rgba(255,255,255,.14); color: #8e97a8; background: linear-gradient(145deg, rgba(255,255,255,.1), rgba(255,255,255,.025)); box-shadow: 0 0 0 10px rgba(255,255,255,.02), 0 18px 48px rgba(0,0,0,.34); }
+      .avatar.speaking { border-color: #c9b5ff; outline: 2px solid rgba(176,140,255,.86); outline-offset: 4px; animation: voice-speaking-ring 1.15s ease-in-out infinite; }
+      @keyframes voice-speaking-ring {
+        0%, 100% { box-shadow: 0 0 0 4px rgba(176,140,255,.34), 0 0 0 10px rgba(176,140,255,.16), 0 18px 48px rgba(0,0,0,.34); }
+        50% { box-shadow: 0 0 0 7px rgba(176,140,255,.5), 0 0 0 15px rgba(176,140,255,.24), 0 0 26px 8px rgba(176,140,255,.3); }
+      }
+      @media (prefers-reduced-motion: reduce) { .avatar.speaking { animation: none; } }
+      .media-badges { position: absolute; z-index: 3; right: -22px; bottom: -2px; display: flex; gap: 2px; pointer-events: none; }
+      .media-badge { position: relative; display: grid; width: 22px; height: 22px; place-items: center; border: 1px solid rgba(232,95,106,.8); border-radius: 50%; color: #ff7b83; background: #101117; }
+      .media-badge::after { position: absolute; width: 22px; height: 2px; border-radius: 2px; background: #f04e5d; content: ""; transform: rotate(-45deg); }
+      .media-badge svg { width: 13px; height: 13px; }
+      .group-participant .media-badges { right: -17px; bottom: -2px; gap: 1px; }
+      .group-participant .media-badge { width: 17px; height: 17px; }
+      .group-participant .media-badge::after { width: 17px; height: 2px; }
+      .group-participant .media-badge svg { width: 10px; height: 10px; }
+      .participant strong { max-width: 100%; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+      .participant small { color: #9299a8; font-size: 11px; }
+      .controls { display: flex; min-height: 92px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 13px; padding: 15px 20px 20px; border-top: 1px solid rgba(255,255,255,.07); }
+      .control { width: 50px; height: 50px; border-color: rgba(255,255,255,.12); border-radius: 50%; background: rgba(255,255,255,.04); }
+      .control[aria-pressed="true"] { position: relative; border-color: rgba(240,142,149,.6); color: #ff6d79; background: rgba(240,75,93,.2); }
+      .control[aria-pressed="true"]::after { position: absolute; width: 30px; height: 2px; border-radius: 2px; background: #f04e5d; content: ""; transform: rotate(-45deg); pointer-events: none; }
+      .answer { border-color: #3bcf9c; color: #fff; background: #28a97e; }
+      .answer:hover { border-color: #4be0ad; background: #32bc8e; }
+      .end { width: 56px; height: 56px; border-color: #e85f6a; color: #fff; background: #cf4854; }
+      .end:hover { border-color: #f37b84; background: #dc5360; }
+      [hidden] { display: none !important; }
+      @media (max-width: 600px) {
+        .stage { gap: 18px; padding: 16px 8px; }
+        .participant { min-width: 120px; }
+        .avatar { width: 100px; height: 100px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="call-window">
+      <header class="titlebar">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="status" class="call-title">Sesli arama</span>
+        <div class="title-controls">
+        <button id="add-participant" class="icon-button" type="button" aria-label="Katılımcı ekle" title="Katılımcı ekle" hidden>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M19 8v6m-3-3h6"></path></svg>
+        </button>
+          <button id="show-main" class="icon-button" type="button" aria-label="Uygulamayı göster" title="Uygulamayı göster">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"></path><path d="M10 14 21 3"></path><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"></path></svg>
+          </button>
+          <button id="minimize" class="icon-button" type="button" aria-label="Pencereyi küçült" title="Pencereyi küçült">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg>
+          </button>
+          <button id="end-top" class="icon-button end-top" type="button" aria-label="Aramayı bitir" title="Aramayı bitir">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+          </button>
+        </div>
+      </header>
+      <section class="stage" aria-label="Arama katılımcıları">
+        <article class="participant">
+          <div id="self-avatar" class="avatar self"><span class="face-clip"><canvas id="self-face" class="skin-face" aria-hidden="true" hidden></canvas><span id="self-avatar-fallback">W</span></span><span id="self-media-badges" class="media-badges" aria-hidden="true"></span></div>
+          <strong id="self-name">Westron</strong>
+          <small id="self-state"></small>
+        </article>
+        <article id="friend-participant" class="participant">
+          <div id="friend-avatar" class="avatar"><span class="face-clip"><canvas id="friend-face" class="skin-face" aria-hidden="true" hidden></canvas><span id="friend-avatar-fallback">W</span></span><span id="friend-media-badges" class="media-badges" aria-hidden="true"></span></div>
+          <strong id="friend-name">...</strong>
+          <small id="friend-state"></small>
+        </article>
+        <div id="group-participants" class="group-participants" hidden></div>
+      </section>
+      <footer class="controls">
+        <button id="microphone" class="control" type="button" aria-pressed="false" aria-label="Mikrofon" title="Mikrofon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"></rect><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"></path></svg>
+        </button>
+        <button id="speaker" class="control" type="button" aria-pressed="false" aria-label="Hoparlör" title="Hoparlör">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M15.5 8.5a5 5 0 0 1 0 7m3-10a9 9 0 0 1 0 13"></path></svg>
+        </button>
+        <button id="reject" class="control end" type="button" aria-label="Reddet" title="Reddet" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.1 5.2 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.7l.5 3.2a2 2 0 0 1-.6 1.7L8.1 11.5a16 16 0 0 0 4.4 4.4l1.9-1.9a2 2 0 0 1 1.7-.6l3.2.5a2 2 0 0 1 1.7 2Z"></path><path d="m3 3 18 18"></path></svg>
+        </button>
+        <button id="accept" class="control answer" type="button" aria-label="Kabul et" title="Kabul et" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2A19.8 19.8 0 0 1 3.1 5.2 2 2 0 0 1 5.1 3h3a2 2 0 0 1 2 1.7l.5 3.2a2 2 0 0 1-.6 1.7L8.1 11.5a16 16 0 0 0 4.4 4.4l1.9-1.9a2 2 0 0 1 1.7-.6l3.2.5a2 2 0 0 1 1.7 2Z"></path></svg>
+        </button>
+        <button id="end" class="control end" type="button" aria-label="Aramayı bitir" title="Aramayı bitir">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 15c4.5-4 11.5-4 16 0M6 17l-2 3m14-3 2 3"></path></svg>
+        </button>
+      </footer>
+    </main>
+    <script>
+      const stateNode = document.getElementById('status');
+      const selfName = document.getElementById('self-name');
+      const selfAvatar = document.getElementById('self-avatar');
+      const selfFace = document.getElementById('self-face');
+      const selfAvatarFallback = document.getElementById('self-avatar-fallback');
+      const selfMediaBadges = document.getElementById('self-media-badges');
+      const selfState = document.getElementById('self-state');
+      const friendName = document.getElementById('friend-name');
+      const friendParticipant = document.getElementById('friend-participant');
+      const friendAvatar = document.getElementById('friend-avatar');
+      const friendFace = document.getElementById('friend-face');
+      const friendAvatarFallback = document.getElementById('friend-avatar-fallback');
+      const friendMediaBadges = document.getElementById('friend-media-badges');
+      const friendState = document.getElementById('friend-state');
+      const groupParticipantsNode = document.getElementById('group-participants');
+      const microphone = document.getElementById('microphone');
+      const speaker = document.getElementById('speaker');
+      const addParticipant = document.getElementById('add-participant');
+      const accept = document.getElementById('accept');
+      const reject = document.getElementById('reject');
+      const end = document.getElementById('end');
+      const endTop = document.getElementById('end-top');
+      const showMain = document.getElementById('show-main');
+      const minimize = document.getElementById('minimize');
+      const setLabel = (node, label) => {
+        node.title = label;
+        node.setAttribute('aria-label', label);
+      };
+      const appendMuteBadge = (container, kind, label) => {
+        const badge = document.createElement('span');
+        badge.className = 'media-badge';
+        badge.title = label;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        const iconPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        iconPath.setAttribute('d', kind === 'microphone'
+          ? 'M9 9v5a3 3 0 0 0 5.12 2.12M15 9V5a3 3 0 0 0-5.83-1M5 10v2a7 7 0 0 0 11.6 5.3M12 19v3m-4 0h8'
+          : 'M11 5 6 9H3v6h3l5 4zm5 4 5 6m0-6-5 6');
+        svg.append(iconPath);
+        badge.append(svg);
+        container.append(badge);
+      };
+      const updateMuteBadges = (container, microphoneMuted, speakerMuted, labels) => {
+        container.replaceChildren();
+        if (microphoneMuted) appendMuteBadge(container, 'microphone', labels.microphoneMuted || 'Mikrofon kapalı');
+        if (speakerMuted) appendMuteBadge(container, 'speaker', labels.speakerMuted || 'Hoparlör kapalı');
+      };
+      const skinImageCache = new Map();
+      const loadSkinImage = (url) => {
+        if (skinImageCache.has(url)) return skinImageCache.get(url);
+        const imagePromise = new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('Skin görseli yüklenemedi.'));
+          image.src = url;
+        });
+        skinImageCache.set(url, imagePromise);
+        imagePromise.catch(() => skinImageCache.delete(url));
+        return imagePromise;
+      };
+      const drawSkinFace = (url, canvas, fallback) => {
+        const skinUrl = url || '';
+        if (canvas.dataset.skinUrl === skinUrl) return;
+        canvas.dataset.skinUrl = skinUrl;
+        const requestId = String((Number(canvas.dataset.skinRequestId) || 0) + 1);
+        canvas.dataset.skinRequestId = requestId;
+        if (!skinUrl) {
+          canvas.hidden = true;
+          fallback.hidden = false;
+          return;
+        }
+        void loadSkinImage(skinUrl).then((image) => {
+          if (canvas.dataset.skinRequestId !== requestId) return;
+          if (image.naturalWidth < 48 || image.naturalHeight < 16) {
+            throw new Error('Skin dokusu geçersiz.');
+          }
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('Avatar tuvali oluşturulamadı.');
+          canvas.width = 8;
+          canvas.height = 8;
+          context.imageSmoothingEnabled = false;
+          context.clearRect(0, 0, 8, 8);
+          context.drawImage(image, 8, 8, 8, 8, 0, 0, 8, 8);
+          if (image.naturalHeight * 2 !== image.naturalWidth) {
+            context.drawImage(image, 40, 8, 8, 8, 0, 0, 8, 8);
+          }
+          canvas.hidden = false;
+          fallback.hidden = true;
+        }).catch(() => {
+          if (canvas.dataset.skinRequestId !== requestId) return;
+          canvas.hidden = true;
+          fallback.hidden = false;
+        });
+      };
+      const runAction = (action) => {
+        void window.voiceCallWindow.action(action).catch((error) => {
+          stateNode.textContent = error.message || 'Sesli arama işlemi tamamlanamadı.';
+        });
+      };
+      window.voiceCallWindow.onState((state) => {
+        const labels = state.labels || {};
+        stateNode.textContent = state.status || 'Sesli arama';
+        selfName.textContent = state.self || 'Westron';
+        const selfFaceUrl = state.selfSkinUrl || '';
+        selfAvatar.classList.toggle('speaking', state.selfSpeaking === true);
+        selfAvatarFallback.textContent = (state.self || 'W').slice(0, 1).toUpperCase();
+        drawSkinFace(selfFaceUrl, selfFace, selfAvatarFallback);
+        updateMuteBadges(selfMediaBadges, state.microphoneMuted, state.remoteAudioMuted, labels);
+        document.documentElement.dataset.callAvatarShape = state.avatarShape === 'square' ? 'square' : 'round';
+        selfState.textContent = labels.self || '';
+        friendName.textContent = state.friend || '...';
+        friendAvatarFallback.textContent = (state.friend || 'W').slice(0, 1).toUpperCase();
+        friendAvatar.classList.toggle('speaking', state.speaking === true);
+        const faceUrl = state.friendSkinUrl || '';
+        drawSkinFace(faceUrl, friendFace, friendAvatarFallback);
+        friendState.textContent = state.status || '';
+        updateMuteBadges(friendMediaBadges, state.friendMicrophoneMuted, state.friendSpeakerMuted, labels);
+        const groupParticipants = Array.isArray(state.groupParticipants) ? state.groupParticipants : [];
+        friendParticipant.hidden = groupParticipants.length > 0;
+        groupParticipantsNode.hidden = groupParticipants.length === 0;
+        groupParticipantsNode.replaceChildren();
+        for (const participant of groupParticipants) {
+          const item = document.createElement('article');
+          item.className = 'group-participant';
+          const avatar = document.createElement('div');
+          avatar.className = `avatar${participant.speaking ? ' speaking' : ''}`;
+          const faceClip = document.createElement('span');
+          faceClip.className = 'face-clip';
+          if (participant.skinUrl) {
+            const canvas = document.createElement('canvas');
+            canvas.className = 'skin-face';
+            canvas.setAttribute('aria-hidden', 'true');
+            canvas.hidden = true;
+            const fallback = document.createElement('span');
+            fallback.textContent = (participant.username || 'W').slice(0, 1).toUpperCase();
+            faceClip.append(canvas, fallback);
+            drawSkinFace(participant.skinUrl, canvas, fallback);
+          } else {
+            faceClip.textContent = (participant.username || 'W').slice(0, 1).toUpperCase();
+          }
+          avatar.append(faceClip);
+          const muteBadges = document.createElement('span');
+          muteBadges.className = 'media-badges';
+          muteBadges.setAttribute('aria-hidden', 'true');
+          updateMuteBadges(muteBadges, participant.microphoneMuted, participant.speakerMuted, labels);
+          avatar.append(muteBadges);
+          const name = document.createElement('strong');
+          name.textContent = participant.username || '...';
+          const participantState = document.createElement('small');
+          participantState.textContent = participant.connected
+            ? labels.connected || 'Connected'
+            : labels.connecting || 'Connecting…';
+          item.append(avatar, name, participantState);
+          groupParticipantsNode.append(item);
+        }
+        setLabel(microphone, labels.microphone || 'Mikrofon');
+        setLabel(speaker, labels.speaker || 'Hoparlör');
+        setLabel(addParticipant, labels.addParticipant || 'Katılımcı ekle');
+        setLabel(end, labels.end || 'Aramayı bitir');
+        setLabel(endTop, labels.end || 'Aramayı bitir');
+        setLabel(accept, labels.accept || 'Kabul et');
+        setLabel(reject, labels.reject || 'Reddet');
+        setLabel(minimize, labels.minimize || 'Pencereyi küçült');
+        setLabel(showMain, labels.showMain || 'Uygulamayı göster');
+        microphone.setAttribute('aria-pressed', String(state.microphoneMuted));
+        speaker.setAttribute('aria-pressed', String(state.remoteAudioMuted));
+        addParticipant.hidden = state.incoming || state.canAddParticipant !== true;
+        selfState.textContent = state.microphoneMuted ? labels.microphone || '' : labels.self || '';
+        accept.hidden = !state.incoming;
+        reject.hidden = !state.incoming;
+        microphone.hidden = state.incoming;
+        speaker.hidden = state.incoming;
+        end.hidden = state.incoming;
+      });
+      microphone.addEventListener('click', () => runAction('toggle-microphone'));
+      speaker.addEventListener('click', () => runAction('toggle-speaker'));
+      addParticipant.addEventListener('click', () => runAction('add-participant'));
+      accept.addEventListener('click', () => runAction('accept'));
+      reject.addEventListener('click', () => runAction('reject'));
+      end.addEventListener('click', () => runAction('end'));
+      endTop.addEventListener('click', () => runAction('end'));
+      showMain.addEventListener('click', () => {
+        void window.voiceCallWindow.control('show-main').catch((error) => {
+          stateNode.textContent = error.message || 'Uygulama penceresi açılamadı.';
+        });
+      });
+      minimize.addEventListener('click', () => {
+        void window.voiceCallWindow.control('minimize').catch((error) => {
+          stateNode.textContent = error.message || 'Sesli arama penceresi küçültülemedi.';
+        });
+      });
+    </script>
+  </body>
+</html>

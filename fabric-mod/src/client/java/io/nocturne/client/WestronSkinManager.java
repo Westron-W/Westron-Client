@@ -49,6 +49,7 @@ import java.util.concurrent.Executors;
 public final class WestronSkinManager {
     private static final Logger LOGGER = LoggerFactory.getLogger("Westron Launcher Skins");
     private static final URI API_ORIGIN = URI.create("https://westronskin.sytes.net");
+    private static final URI API_FALLBACK_ORIGIN = URI.create("https://westronclient.myvnc.com");
     private static final URI MOJANG_API_ORIGIN = URI.create("https://api.mojang.com");
     private static final URI MOJANG_SESSION_ORIGIN = URI.create("https://sessionserver.mojang.com");
     private static final URI TLAUNCHER_ORIGIN = URI.create("https://auth.tlauncher.org");
@@ -196,6 +197,18 @@ public final class WestronSkinManager {
         URI westronCapeUri = null;
         try {
             JsonObject profile = getJson(API_ORIGIN.resolve("/api/v1/profiles/" + cacheUsername));
+            if (profile != null) {
+                String profileUsername = getWestronProfileUsername(profile);
+                westronCapeUri = getWestronCapeUri(profileUsername, profile);
+                if (refreshFromWestron(cacheUsername, profile, entry)) {
+                    return true;
+                }
+            }
+        } catch (IOException exception) {
+            lastFailure = exception;
+        }
+        try {
+            JsonObject profile = getJson(API_FALLBACK_ORIGIN.resolve("/api/v1/profiles/" + cacheUsername));
             if (profile != null) {
                 String profileUsername = getWestronProfileUsername(profile);
                 westronCapeUri = getWestronCapeUri(profileUsername, profile);
@@ -577,7 +590,8 @@ public final class WestronSkinManager {
     private static void validateWestronSkinUri(String username, URI skinUri) throws IOException {
         String expectedPath = "/api/v1/profiles/" + username + "/skin.png";
         if (!"https".equalsIgnoreCase(skinUri.getScheme())
-                || !API_ORIGIN.getHost().equalsIgnoreCase(skinUri.getHost())
+                || (!API_ORIGIN.getHost().equalsIgnoreCase(skinUri.getHost())
+                && !API_FALLBACK_ORIGIN.getHost().equalsIgnoreCase(skinUri.getHost()))
                 || skinUri.getPort() != -1
                 || !expectedPath.equalsIgnoreCase(skinUri.getPath())
                 || skinUri.getUserInfo() != null
@@ -590,7 +604,8 @@ public final class WestronSkinManager {
     private static void validateWestronCapeUri(String username, URI capeUri) throws IOException {
         String expectedPath = "/api/v1/profiles/" + username + "/cape.png";
         if (!"https".equalsIgnoreCase(capeUri.getScheme())
-                || !API_ORIGIN.getHost().equalsIgnoreCase(capeUri.getHost())
+                || (!API_ORIGIN.getHost().equalsIgnoreCase(capeUri.getHost())
+                && !API_FALLBACK_ORIGIN.getHost().equalsIgnoreCase(capeUri.getHost()))
                 || capeUri.getPort() != -1
                 || !expectedPath.equalsIgnoreCase(capeUri.getPath())
                 || capeUri.getUserInfo() != null
