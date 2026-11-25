@@ -2,7 +2,7 @@
 
 type AppLanguage = 'tr' | 'en' | 'de' | 'fr' | 'es' | 'ru' | 'it';
 type AppTheme = 'dark' | 'light';
-type GameBehavior = 'close-on-game-exit' | 'stay-open' | 'hide-and-restore';
+type GameBehavior = 'close-on-game-launch' | 'stay-open' | 'hide-and-restore';
 type GameLoader = 'vanilla' | 'fabric' | 'forge';
 
 interface CustomGameProfile {
@@ -390,6 +390,7 @@ interface Window {
       minimized: boolean;
       opening: boolean;
     }) => void) => () => void;
+    onMainWindowHighlight: (callback: () => void) => () => void;
     playWestronNotification: (kind: 'call' | 'message') => Promise<void>;
     showWestronNotification: (input: { sender: string; message: string; notificationId?: string }) => Promise<{ shown: boolean }>;
     onOpenFriends: (callback: (notificationId?: string) => void) => () => void;

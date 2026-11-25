@@ -98,6 +98,7 @@ let minecraftVersionsCache = { expiresAt: 0, versions: [] };
 let updateStatus = { status: 'idle', currentVersion: DISPLAY_VERSION, percent: 0 };
 let updateCheckPromise = null;
 let voiceCallActive = false;
+let shouldQuitAfterVoiceCall = false;
 let mainWindow = null;
 let voiceCallWindow = null;
 let voiceCallWindowReady = false;
@@ -106,6 +107,22 @@ let mainWindowHiddenForVoiceCall = false;
 let isClosingVoiceCallWindow = false;
 let appIsQuitting = false;
 const activeGameSessions = new Set();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+      return;
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 const refreshWestronAuth = createWestronAuthRefresher({
   readCredentials: readWestronAuth,
   refresh: (input) => westronApi.refresh(input),
@@ -356,8 +373,10 @@ async function readSettings() {
     theme: saved.theme === 'light' ? 'light' : 'dark',
     languageSetupComplete: saved.languageSetupComplete === true,
     profileNoticeDismissed: saved.profileNoticeDismissed === true,
-    gameBehavior: ['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(saved.gameBehavior)
-      ? saved.gameBehavior : 'close-on-game-exit',
+    gameBehavior: saved.gameBehavior === 'close-on-game-exit'
+      ? 'close-on-game-launch'
+      : (['close-on-game-launch', 'stay-open', 'hide-and-restore'].includes(saved.gameBehavior)
+        ? saved.gameBehavior : 'close-on-game-launch'),
     customProfiles,
     selectedCustomProfileId: typeof saved.selectedCustomProfileId === 'string'
       && Array.isArray(saved.customProfiles)
@@ -1331,16 +1350,25 @@ async function launchGame({ mode, offlineUsername }) {
     }
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send('app:game-exited', { username, ...exit });
-      if (gameBehavior === 'hide-and-restore' || gameBehavior === 'stay-open') {
+      if (gameBehavior === 'hide-and-restore' && window !== voiceCallWindow) {
         if (window.isMinimized()) window.restore();
         window.show();
         window.focus();
       }
     }
-    if (gameBehavior === 'close-on-game-exit') app.quit();
   });
-  if (gameBehavior !== 'stay-open') {
-    for (const window of BrowserWindow.getAllWindows()) window.hide();
+  if (gameBehavior === 'hide-and-restore') {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window !== voiceCallWindow) window.hide();
+    }
+  } else if (gameBehavior === 'close-on-game-launch') {
+    if (voiceCallActive) {
+      shouldQuitAfterVoiceCall = true;
+      mainWindowHiddenForVoiceCall = true;
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
+    } else {
+      app.quit();
+    }
   }
   return `Minecraft ${username} adıyla başlatıldı.`;
 }
@@ -1495,7 +1523,7 @@ async function getProjectTitle(projectId) {
   return project.title;
 }
 
-async function downloadModrinthFile(file, directory, expectedExtension) {
+async function downloadModrinthFile(file, directory, expectedExtension, forceReinstall = false) {
   if (typeof file?.filename !== 'string'
     || path.basename(file.filename) !== file.filename
     || !file.filename.toLowerCase().endsWith(expectedExtension)) {
@@ -1513,7 +1541,7 @@ async function downloadModrinthFile(file, directory, expectedExtension) {
   const targetPath = path.join(directory, file.filename);
   try {
     const existing = await fs.readFile(targetPath);
-    if (createHash('sha1').update(existing).digest('hex') === expectedSha1.toLowerCase()) {
+    if (!forceReinstall && createHash('sha1').update(existing).digest('hex') === expectedSha1.toLowerCase()) {
       return { fileName: file.filename, installed: false };
     }
   } catch (error) {
@@ -1600,7 +1628,7 @@ async function resolveModInstallPlan(projectId, gameVersion, loader, selectedVer
   return { plan: result.plan, modsDir };
 }
 
-async function installMod(projectId, gameVersion, loader, selectedVersionId = null, confirmedDependencyIds = null) {
+async function installMod(projectId, gameVersion, loader, selectedVersionId = null, confirmedDependencyIds = null, forceReinstall = false) {
   const { plan, modsDir } = await resolveModInstallPlan(projectId, gameVersion, loader, selectedVersionId);
   const filesToInstall = plan.map(({ version, title, projectId: dependencyProjectId }) => {
     const jarFiles = version.files?.filter((item) => item.filename?.toLowerCase().endsWith('.jar')) ?? [];
@@ -1622,7 +1650,7 @@ async function installMod(projectId, gameVersion, loader, selectedVersionId = nu
     try {
       const existing = await fs.readFile(path.join(modsDir, safeName));
       const expectedSha1 = item.file.hashes?.sha1;
-      if (typeof expectedSha1 !== 'string'
+      if (forceReinstall || typeof expectedSha1 !== 'string'
         || createHash('sha1').update(existing).digest('hex') !== expectedSha1.toLowerCase()) {
         missing.push({ ...item, safeName });
       }
@@ -1651,7 +1679,7 @@ async function installMod(projectId, gameVersion, loader, selectedVersionId = nu
 
   const installedFiles = [];
   for (const { file, safeName } of missing) {
-    const result = await downloadModrinthFile(file, modsDir, '.jar');
+    const result = await downloadModrinthFile(file, modsDir, '.jar', forceReinstall);
     if (result.installed) installedFiles.push(safeName);
   }
   await persistInstalledFiles(
@@ -1775,7 +1803,7 @@ async function installPerformancePreset(mode, includeShader) {
   return { installed, skipped };
 }
 
-async function installModrinthPack(type, projectId, gameVersion, selectedVersionId) {
+async function installModrinthPack(type, projectId, gameVersion, selectedVersionId, forceReinstall = false) {
   if (type !== 'resourcepack' && type !== 'shader') {
     throw new Error('Kaynak paketi veya shader paketi türü seçilmelidir.');
   }
@@ -1795,7 +1823,7 @@ async function installModrinthPack(type, projectId, gameVersion, selectedVersion
   if (!file) throw new ModCompatibilityError('Bu Modrinth sürümünde indirilebilir ZIP dosyası bulunamadı.');
   const directory = getContentDirectory((await getState()).gameDirectory, type);
   const installIndex = await readInstallIndex(directory, '.zip');
-  const result = await downloadModrinthFile(file, directory, '.zip');
+  const result = await downloadModrinthFile(file, directory, '.zip', forceReinstall);
   await persistInstalledFiles(directory, '.zip', installIndex, [{ projectId, fileName: result.fileName }]);
   return {
     status: result.installed ? 'installed' : 'already-installed',
@@ -1884,7 +1912,12 @@ function updateVoiceCallWindowState(input, participants) {
     closeVoiceCallWindow();
     if (mainWindowHiddenForVoiceCall) {
       mainWindowHiddenForVoiceCall = false;
-      showMainWindow();
+      if (shouldQuitAfterVoiceCall) {
+        shouldQuitAfterVoiceCall = false;
+        app.quit();
+      } else {
+        showMainWindow();
+      }
     }
     return;
   }
@@ -2073,7 +2106,12 @@ ipcMain.handle('app:voice-call-window-control', (event, action) => {
     return;
   }
   if (action === 'show-main') {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      throw new Error('Westron Launcher penceresi artık kullanılamıyor.');
+    }
+    const mainWindowWasVisible = mainWindow.isVisible() && !mainWindow.isMinimized();
     showMainWindow();
+    if (mainWindowWasVisible) mainWindow.webContents.send('app:highlight-main-window');
     return;
   }
   throw new Error('Sesli arama penceresi işlemi geçersiz.');
@@ -2135,7 +2173,7 @@ ipcMain.handle('app:open-selected-profile-folder', async () => {
   if (error) throw new Error(`Seçili oyun profili klasörü açılamadı: ${error}`);
 });
 ipcMain.handle('app:save-game-behavior', async (_event, behavior) => {
-  if (!['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(behavior)) {
+  if (!['close-on-game-launch', 'stay-open', 'hide-and-restore'].includes(behavior)) {
     throw new Error('Westron Launcher davranışı geçersiz.');
   }
   const settings = await readSettings();
@@ -2368,7 +2406,7 @@ ipcMain.handle('app:mod-archive-metadata', async (_event, fileNames) => {
   const state = await getState();
   return getModArchiveMetadata(getModsDir(state.gameDirectory), fileNames);
 });
-ipcMain.handle('app:install-mod', async (_event, projectId, selectedVersionId, confirmedDependencyIds) => {
+ipcMain.handle('app:install-mod', async (_event, projectId, selectedVersionId, confirmedDependencyIds, forceReinstall = false) => {
   const state = await getState();
   const result = await installMod(
     String(projectId),
@@ -2376,19 +2414,21 @@ ipcMain.handle('app:install-mod', async (_event, projectId, selectedVersionId, c
     state.loader,
     typeof selectedVersionId === 'string' ? selectedVersionId : null,
     confirmedDependencyIds,
+    forceReinstall === true,
   );
   if (result.status === 'installed') {
     await forgetPerformanceProjects(state.gameDirectory, result.projectIds);
   }
   return result;
 });
-ipcMain.handle('app:install-content', async (_event, type, projectId, selectedVersionId) => {
+ipcMain.handle('app:install-content', async (_event, type, projectId, selectedVersionId, forceReinstall = false) => {
   const state = await getState();
   const result = await installModrinthPack(
     String(type),
     String(projectId),
     state.gameVersion,
     typeof selectedVersionId === 'string' ? selectedVersionId : null,
+    forceReinstall === true,
   );
   if (type === 'shader') {
     await forgetPerformanceProjects(state.gameDirectory, [String(projectId)], 'shader');
@@ -2711,6 +2751,7 @@ app.on('before-quit', () => {
 });
 
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return;
   setupMediaPermissions();
   setupApplicationMenu();
   configureAutoUpdater();

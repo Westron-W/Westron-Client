@@ -1,6 +1,6 @@
 # Westron Launcher
 
-Westron Launcher web arayüzü; Windows ve macOS indirme sayfası, Westron hesabıyla giriş ve e-posta doğrulama, hesap özeti, 3D karakter önizlemesi ile PNG skin ve pelerin yükleme/değiştirme/kaldırma işlemlerini destekler. Hesap, Microsoft/Minecraft hesabından ayrıdır. Görseller Westron skin API tarafından doğrulanır ve saklanır. Site oturumu en geç 30 günde sona erer; çıkış yapmak oturumu hemen kapatır ancak hesabı silmez.
+Westron Launcher web arayüzü; Windows ve macOS indirme sayfası, Westron hesabıyla giriş ve e-posta doğrulama, hesap özeti, 3D karakter önizlemesi ile PNG skin ve pelerin yükleme/değiştirme/kaldırma işlemlerini destekler. Hesap, Microsoft/Minecraft hesabından ayrıdır. Görseller Westron skin API tarafından doğrulanır ve saklanır. Oturum aynı tarayıcıda sayfa yenilense veya tarayıcı yeniden açılsa da korunur ve en geç 30 günde sona erer; çıkış yapmak oturumu hemen kapatır ancak hesabı silmez.
 
 ## Çalıştırma
 

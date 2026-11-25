@@ -5,6 +5,13 @@ const EXPIRY_KEY = "westron.accessExpiresAt";
 const SESSION_EXPIRY_KEY = "westron.sessionExpiresAt";
 const ACCOUNT_KEY = "westron.account";
 const MAX_SESSION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_KEYS = [ACCESS_KEY, REFRESH_KEY, EXPIRY_KEY, SESSION_EXPIRY_KEY, ACCOUNT_KEY];
+
+for (const key of SESSION_KEYS) {
+  const legacyValue = sessionStorage.getItem(key);
+  if (legacyValue !== null) localStorage.setItem(key, legacyValue);
+  sessionStorage.removeItem(key);
+}
 
 const authCard = document.querySelector("#authCard");
 const accountSummary = document.querySelector("#accountSummary");
@@ -74,7 +81,7 @@ function setBusy(form, busy, buttonText) {
 
 function savedAccount() {
   try {
-    return JSON.parse(sessionStorage.getItem(ACCOUNT_KEY) || "null");
+    return JSON.parse(localStorage.getItem(ACCOUNT_KEY) || "null");
   } catch {
     return null;
   }
@@ -121,37 +128,33 @@ function setView(name) {
 
 function tokens() {
   return {
-    access: sessionStorage.getItem(ACCESS_KEY),
-    refresh: sessionStorage.getItem(REFRESH_KEY),
-    expiresAt: Number(sessionStorage.getItem(EXPIRY_KEY) || 0),
-    sessionExpiresAt: Number(sessionStorage.getItem(SESSION_EXPIRY_KEY) || 0),
+    access: localStorage.getItem(ACCESS_KEY),
+    refresh: localStorage.getItem(REFRESH_KEY),
+    expiresAt: Number(localStorage.getItem(EXPIRY_KEY) || 0),
+    sessionExpiresAt: Number(localStorage.getItem(SESSION_EXPIRY_KEY) || 0),
   };
 }
 
 function saveTokens(data) {
-  sessionStorage.setItem(ACCESS_KEY, data.accessToken);
-  sessionStorage.setItem(REFRESH_KEY, data.refreshToken);
-  sessionStorage.setItem(EXPIRY_KEY, String(Date.now() + data.expiresIn * 1000));
-  const existingSessionExpiry = Number(sessionStorage.getItem(SESSION_EXPIRY_KEY) || 0);
+  localStorage.setItem(ACCESS_KEY, data.accessToken);
+  localStorage.setItem(REFRESH_KEY, data.refreshToken);
+  localStorage.setItem(EXPIRY_KEY, String(Date.now() + data.expiresIn * 1000));
+  const existingSessionExpiry = Number(localStorage.getItem(SESSION_EXPIRY_KEY) || 0);
   if (!Number.isFinite(existingSessionExpiry) || existingSessionExpiry <= Date.now()) {
     const serverRefreshTtl = Number(data.refreshExpiresIn);
     const sessionAge = Number.isFinite(serverRefreshTtl) && serverRefreshTtl > 0
       ? Math.min(serverRefreshTtl * 1000, MAX_SESSION_AGE_MS)
       : MAX_SESSION_AGE_MS;
-    sessionStorage.setItem(SESSION_EXPIRY_KEY, String(Date.now() + sessionAge));
+    localStorage.setItem(SESSION_EXPIRY_KEY, String(Date.now() + sessionAge));
   }
-  if (data.account) sessionStorage.setItem(ACCOUNT_KEY, JSON.stringify(data.account));
+  if (data.account) localStorage.setItem(ACCOUNT_KEY, JSON.stringify(data.account));
   scheduleSessionExpiry();
 }
 
 function clearSession() {
   window.clearTimeout(sessionExpiryTimer);
   sessionExpiryTimer = 0;
-  sessionStorage.removeItem(ACCESS_KEY);
-  sessionStorage.removeItem(REFRESH_KEY);
-  sessionStorage.removeItem(EXPIRY_KEY);
-  sessionStorage.removeItem(SESSION_EXPIRY_KEY);
-  sessionStorage.removeItem(ACCOUNT_KEY);
+  for (const key of SESSION_KEYS) localStorage.removeItem(key);
   profile = null;
   selectedSkin = null;
   if (previewUrl) URL.revokeObjectURL(previewUrl);

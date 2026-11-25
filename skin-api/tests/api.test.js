@@ -46,6 +46,92 @@ test('allows enough time for large release uploads to arrive through a slow conn
   assert.equal(app.skinDatabase.pragma('user_version', { simple: true }), 15);
 });
 
+test('temporarily locks failed logins per account and client address', async () => {
+  const email = 'LockoutPlayer@example.test';
+  await createAccount('LockoutPlayer', email);
+  const login = (remoteAddress, password) => app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    remoteAddress,
+    payload: { email, password },
+  });
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    assert.equal((await login('192.0.2.10', 'incorrect password')).statusCode, 401);
+  }
+  const locked = await login('192.0.2.10', 'incorrect password');
+  assert.equal(locked.statusCode, 429);
+  assert.equal(locked.json().error.code, 'login_temporarily_locked');
+  assert.match(locked.json().error.message, /Çok Fazla Yanlış Giriş Yapıldı/);
+
+  assert.equal((await login('192.0.2.11', 'correct horse battery staple')).statusCode, 200);
+
+  const realNow = Date.now;
+  const lockStartedAt = realNow();
+  Date.now = () => lockStartedAt + 5 * 60 * 1000 + 1;
+  try {
+    assert.equal((await login('192.0.2.10', 'correct horse battery staple')).statusCode, 200);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('blocks a seventh message within ten seconds and resumes after five seconds', async () => {
+  const sender = await createAccount('CooldownSender');
+  const receiver = await createAccount('CooldownFriend');
+  const senderHeaders = bearer(sender.accessToken);
+  const receiverHeaders = bearer(receiver.accessToken);
+  const friendRequest = await app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/requests',
+    headers: senderHeaders,
+    payload: { username: 'CooldownFriend' },
+  });
+  assert.equal(friendRequest.statusCode, 201);
+  const requestId = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends',
+    headers: receiverHeaders,
+  })).json().incomingRequests[0].requestId;
+  assert.equal((await app.inject({
+    method: 'POST',
+    url: `/api/v1/friends/requests/${requestId}/respond`,
+    headers: receiverHeaders,
+    payload: { accept: true },
+  })).statusCode, 200);
+  const recipientUserId = (await app.inject({
+    method: 'GET',
+    url: '/api/v1/friends',
+    headers: senderHeaders,
+  })).json().friends[0].userId;
+  const sendMessage = () => app.inject({
+    method: 'POST',
+    url: '/api/v1/friends/messages',
+    headers: senderHeaders,
+    payload: { recipientUserId, body: 'Hello there' },
+  });
+
+  const realNow = Date.now;
+  const currentTime = realNow();
+  Date.now = () => currentTime;
+  try {
+    for (let messageNumber = 0; messageNumber < 6; messageNumber += 1) {
+      assert.equal((await sendMessage()).statusCode, 201);
+    }
+    const throttled = await sendMessage();
+    assert.equal(throttled.statusCode, 429);
+    assert.equal(throttled.json().error.code, 'message_cooldown');
+    assert.equal(throttled.json().error.message, 'Çok Hızlı Mesaj Gönderiyorsun! Lütfen 5 Saniye Bekle.');
+
+    Date.now = () => currentTime + 4_999;
+    assert.equal((await sendMessage()).statusCode, 429);
+    Date.now = () => currentTime + 5_001;
+    assert.equal((await sendMessage()).statusCode, 201);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test('migrates version 14 databases by adding the separate elytra texture table', async () => {
   const database = new Database(':memory:');
   try {
@@ -778,12 +864,21 @@ test('supports friend requests, friend-only presence, one-time messages and call
       headers: aliceHeaders,
     })).json(), { recalled: true });
 
-    const legacyRecallMessage = await app.inject({
-      method: 'POST',
-      url: '/api/v1/friends/messages',
-      headers: aliceHeaders,
-      payload: { recipientUserId: bobId, body: 'Legacy recall route' },
-    });
+    const realNow = Date.now;
+    const cooldownExpiredAt = realNow() + 5_001;
+    Date.now = () => cooldownExpiredAt;
+    let legacyRecallMessage;
+    try {
+      legacyRecallMessage = await app.inject({
+        method: 'POST',
+        url: '/api/v1/friends/messages',
+        headers: aliceHeaders,
+        payload: { recipientUserId: bobId, body: 'Legacy recall route' },
+      });
+      assert.equal(legacyRecallMessage.statusCode, 201, legacyRecallMessage.body);
+    } finally {
+      Date.now = realNow;
+    }
     assert.deepEqual((await app.inject({
       method: 'DELETE',
       url: `/api/v1/friends/messages/${legacyRecallMessage.json().messageId}`,
@@ -1125,13 +1220,20 @@ test('supports friend requests, friend-only presence, one-time messages and call
     headers: aliceHeaders,
   })).json(), []);
 
-  const pendingMessage = await app.inject({
-    method: 'POST',
-    url: '/api/v1/friends/messages',
-    headers: aliceHeaders,
-    payload: { recipientUserId: bobFriend.userId, body: 'Removed with friendship' },
-  });
-  assert.equal(pendingMessage.statusCode, 201, pendingMessage.body);
+  const realNow = Date.now;
+  const messageCooldownExpiredAt = realNow() + 5_001;
+  Date.now = () => messageCooldownExpiredAt;
+  try {
+    const pendingMessage = await app.inject({
+      method: 'POST',
+      url: '/api/v1/friends/messages',
+      headers: aliceHeaders,
+      payload: { recipientUserId: bobFriend.userId, body: 'Removed with friendship' },
+    });
+    assert.equal(pendingMessage.statusCode, 201, pendingMessage.body);
+  } finally {
+    Date.now = realNow;
+  }
   const pendingCallId = '223e4567-e89b-12d3-a456-426614174000';
   assert.equal((await app.inject({
     method: 'POST',

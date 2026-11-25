@@ -6,6 +6,8 @@ type FriendsPageProps = {
   account: WestronAccount | null;
   gameRunning: boolean;
   language: AppLanguage;
+  profileAvatarShape: 'round' | 'square';
+  onProfileAvatarShapeChange: (shape: 'round' | 'square') => void;
   isActive: boolean;
   onOpenAccount: () => void;
   onOpenScreenshots: () => void;
@@ -408,6 +410,8 @@ export default function FriendsPage({
   account,
   gameRunning,
   language,
+  profileAvatarShape,
+  onProfileAvatarShapeChange,
   isActive,
   onOpenAccount,
   onOpenScreenshots,
@@ -476,9 +480,6 @@ export default function FriendsPage({
   );
   const [speakerVolume, setSpeakerVolume] = useState(Number(localStorage.getItem('westron-speaker-volume') ?? '100'));
   const [inGameOverlay, setInGameOverlay] = useState(localStorage.getItem('westron-in-game-overlay') !== 'false');
-  const [callAvatarShape, setCallAvatarShape] = useState<'round' | 'square'>(
-    localStorage.getItem('westron-call-avatar-shape') === 'square' ? 'square' : 'round',
-  );
   const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
   const photoPickerRef = useRef<HTMLDivElement>(null);
   const friendsPageWasActiveRef = useRef(isActive);
@@ -505,9 +506,6 @@ export default function FriendsPage({
   const localSpeakingAnalyserRef = useRef<AnalyserNode | null>(null);
   const localSpeakingFrameRef = useRef<number | null>(null);
   const microphoneTestStreamRef = useRef<MediaStream | null>(null);
-  const microphoneTestOutputStreamRef = useRef<MediaStream | null>(null);
-  const microphoneTestAudioContextRef = useRef<AudioContext | null>(null);
-  const microphoneTestGainNodeRef = useRef<GainNode | null>(null);
   const microphoneTestAudioRef = useRef<HTMLAudioElement>(null);
   const microphoneTestRestoreMuteRef = useRef<boolean | null>(null);
   const activeCallRef = useRef<ActiveCall | null>(null);
@@ -654,13 +652,6 @@ export default function FriendsPage({
   function stopMicrophoneTest() {
     microphoneTestStreamRef.current?.getTracks().forEach((track) => track.stop());
     microphoneTestStreamRef.current = null;
-    microphoneTestOutputStreamRef.current?.getTracks().forEach((track) => track.stop());
-    microphoneTestOutputStreamRef.current = null;
-    microphoneTestGainNodeRef.current?.disconnect();
-    microphoneTestGainNodeRef.current = null;
-    const testContext = microphoneTestAudioContextRef.current;
-    microphoneTestAudioContextRef.current = null;
-    if (testContext && testContext.state !== 'closed') void testContext.close();
     if (microphoneTestAudioRef.current) microphoneTestAudioRef.current.srcObject = null;
     setMicrophoneTestRunning(false);
     const previousMuteState = microphoneTestRestoreMuteRef.current;
@@ -679,46 +670,30 @@ export default function FriendsPage({
       return;
     }
     setBusy('microphone-test');
+    const wasMuted = microphoneMutedRef.current;
+    microphoneTestRestoreMuteRef.current = wasMuted;
+    if (localStreamRef.current) {
+      microphoneMutedRef.current = true;
+      setMicrophoneMuted(true);
+      localStreamRef.current.getAudioTracks().forEach((track) => { track.enabled = false; });
+    }
     try {
-      const currentTrack = localStreamRef.current?.getAudioTracks()[0];
-      let testStream: MediaStream;
-      if (currentTrack) {
-        const testTrack = currentTrack.clone();
-        testTrack.enabled = true;
-        testStream = new MediaStream([testTrack]);
-      } else {
-        testStream = await captureMicrophoneStream({
-          deviceId: microphoneId ? { ideal: microphoneId } : undefined,
-          echoCancellation: { ideal: true },
-          noiseSuppression: noiseSuppressionEnabled,
-          autoGainControl: { ideal: true },
-          channelCount: { ideal: 1 },
-          sampleRate: { ideal: 48_000 },
-        });
-      }
+      const testStream = await captureMicrophoneStream({
+        deviceId: microphoneId ? { ideal: microphoneId } : undefined,
+        echoCancellation: { ideal: false },
+        noiseSuppression: noiseSuppressionEnabled,
+        autoGainControl: { ideal: false },
+        channelCount: { ideal: 1 },
+        sampleRate: { ideal: 48_000 },
+      });
       microphoneTestStreamRef.current = testStream;
-      const context = new AudioContext();
-      const source = context.createMediaStreamSource(testStream);
-      const gain = context.createGain();
-      const destination = context.createMediaStreamDestination();
-      gain.gain.value = microphoneVolume / 100;
-      source.connect(gain);
-      gain.connect(destination);
-      microphoneTestAudioContextRef.current = context;
-      microphoneTestGainNodeRef.current = gain;
-      microphoneTestOutputStreamRef.current = destination.stream;
-      await context.resume();
-      const wasMuted = microphoneMutedRef.current;
-      microphoneTestRestoreMuteRef.current = wasMuted;
-      if (localStreamRef.current) {
-        microphoneMutedRef.current = true;
-        setMicrophoneMuted(true);
-        localStreamRef.current.getAudioTracks().forEach((track) => { track.enabled = false; });
-      }
+      const testTrack = testStream.getAudioTracks()[0];
+      if (!testTrack) throw new Error('Mikrofon testi için ses girişi alınamadı.');
+      await applyNoiseSuppressionConstraint(testTrack, noiseSuppressionEnabled);
       const audio = microphoneTestAudioRef.current;
       if (!audio) throw new Error('Mikrofon testi başlatılamadı.');
-      audio.srcObject = destination.stream;
-      audio.volume = speakerVolume / 100;
+      audio.srcObject = testStream;
+      audio.volume = Math.min(1, (speakerVolume / 100) * (microphoneVolume / 100));
       if (speakerId) {
         const output = audio as HTMLAudioElement & { setSinkId?: (deviceId: string) => Promise<void> };
         await output.setSinkId?.(speakerId);
@@ -909,8 +884,11 @@ export default function FriendsPage({
   function setNoiseSuppression(enabled: boolean) {
     setNoiseSuppressionEnabled(enabled);
     localStorage.setItem('westron-noise-suppression', String(enabled));
-    const tracks = localStreamRef.current?.getAudioTracks() ?? [];
-    void Promise.all(tracks.map((track) => applyNoiseSuppressionConstraint(track, enabled)))
+    const tracks = new Set([
+      ...(localStreamRef.current?.getAudioTracks() ?? []),
+      ...(microphoneTestStreamRef.current?.getAudioTracks() ?? []),
+    ]);
+    void Promise.all(Array.from(tracks, (track) => applyNoiseSuppressionConstraint(track, enabled)))
       .catch((reason: unknown) => setError(errorMessage(reason)));
   }
 
@@ -923,6 +901,10 @@ export default function FriendsPage({
     }
     setError(errorMessage(reason));
     setPresenceError('');
+  }
+
+  function clearError() {
+    setError('');
   }
 
   function notifyIncoming(notification: FriendsNotification) {
@@ -1018,7 +1000,6 @@ export default function FriendsPage({
       setOutgoingRequestPrompt(null);
       setGroupMemberRemovalPrompt(null);
       setNotice('');
-      setError('');
       setVoiceSettingsPageOpen(false);
     }
     friendsPageWasActiveRef.current = isActive;
@@ -1109,8 +1090,8 @@ export default function FriendsPage({
   }, [callGroupMembers, account?.username]);
 
   useEffect(() => {
-    document.documentElement.dataset.callAvatarShape = callAvatarShape;
-  }, [callAvatarShape]);
+    document.documentElement.dataset.callAvatarShape = profileAvatarShape;
+  }, [profileAvatarShape]);
 
   useEffect(() => {
     if (!window.nocturne) return;
@@ -1134,7 +1115,7 @@ export default function FriendsPage({
         selfSpeaking,
         friend: activeCall.groupName ?? activeCall.friendUsername,
         status: text(callStatusText),
-        avatarShape: callAvatarShape,
+        avatarShape: profileAvatarShape,
         microphoneMuted,
         remoteAudioMuted,
         friendMicrophoneMuted: peerMediaStates[activeCall.friendUserId]?.microphoneMuted ?? false,
@@ -1198,7 +1179,7 @@ export default function FriendsPage({
     callGroupMembers,
     callFriendSkinUrl,
     selfCallSkinUrl,
-    callAvatarShape,
+    profileAvatarShape,
     callStatusText,
     language,
   ]);
@@ -1296,7 +1277,6 @@ export default function FriendsPage({
         }
         knownIncomingRequestIdsRef.current = incomingRequestIds;
         setFriendList(nextFriends);
-        setError('');
       } catch (reason) {
         if (active) reportApiError(reason);
       }
@@ -1539,8 +1519,8 @@ export default function FriendsPage({
     void refreshSocialState();
     void receiveMessages();
     if (isActive) void receiveSignals();
-    const socialInterval = window.setInterval(() => void refreshSocialState(), 15_000);
-    const messageInterval = window.setInterval(() => void receiveMessages(), 8_000);
+    const socialInterval = window.setInterval(() => void refreshSocialState(), 5_000);
+    const messageInterval = window.setInterval(() => void receiveMessages(), 2_500);
     const signalInterval = window.setInterval(() => {
       void receiveSignals();
     }, 5_000);
@@ -2046,7 +2026,7 @@ export default function FriendsPage({
         deviceId: microphoneId ? { ideal: microphoneId } : undefined,
         echoCancellation: { ideal: true },
         noiseSuppression: noiseSuppressionEnabled,
-        autoGainControl: { ideal: true },
+        autoGainControl: { ideal: false },
         channelCount: { ideal: 1 },
         sampleRate: { ideal: 48_000 },
       });
@@ -2615,7 +2595,10 @@ export default function FriendsPage({
               <p>{text('Mikrofon, hoparlör ve arama arayüzünü yapılandırın.')}</p>
             </div>
           </header>
-          {error && <div className="friends-alert friends-alert-error" role="alert">{text(error)}</div>}
+          {error && <div className="friends-alert friends-alert-error" role="alert">
+            <span>{text(error)}</span>
+            <button className="friends-alert-dismiss" type="button" aria-label={text('Kapat')} onClick={clearError}><X size={14} /></button>
+          </div>}
           <div className="friends-call-settings friends-call-settings-page" role="group" aria-label={text('Ses Ayarları')}>
             <label><span><Mic size={14} />{text('Mikrofon')}</span>
               <select value={microphoneId} onChange={(event) => {
@@ -2647,8 +2630,8 @@ export default function FriendsPage({
                 if (localGainNodeRef.current && localAudioContextRef.current) {
                   localGainNodeRef.current.gain.setTargetAtTime(volume / 100, localAudioContextRef.current.currentTime, 0.02);
                 }
-                if (microphoneTestGainNodeRef.current && microphoneTestAudioContextRef.current) {
-                  microphoneTestGainNodeRef.current.gain.setTargetAtTime(volume / 100, microphoneTestAudioContextRef.current.currentTime, 0.02);
+                if (microphoneTestAudioRef.current) {
+                  microphoneTestAudioRef.current.volume = Math.min(1, (speakerVolume / 100) * (volume / 100));
                 }
               }} />
             </label>
@@ -2658,7 +2641,9 @@ export default function FriendsPage({
                 setSpeakerVolume(Number(event.target.value));
                 localStorage.setItem('westron-speaker-volume', event.target.value);
                 if (remoteAudioRef.current) remoteAudioRef.current.volume = volume;
-                if (microphoneTestAudioRef.current) microphoneTestAudioRef.current.volume = volume;
+                if (microphoneTestAudioRef.current) {
+                  microphoneTestAudioRef.current.volume = Math.min(1, volume * (microphoneVolume / 100));
+                }
               }} />
             </label>
             <label className="friends-setting-toggle">
@@ -2669,10 +2654,9 @@ export default function FriendsPage({
               <span>{text('Oyun içi sesli arama arayüzü')}</span>
             </label>
             <label><span>{text('Konuşan profil fotoğrafı')}</span>
-              <select value={callAvatarShape} onChange={(event) => {
+              <select value={profileAvatarShape} onChange={(event) => {
                 const shape = event.target.value as 'round' | 'square';
-                setCallAvatarShape(shape);
-                localStorage.setItem('westron-call-avatar-shape', shape);
+                onProfileAvatarShapeChange(shape);
               }}>
                 <option value="round">{text('Yuvarlak')}</option>
                 <option value="square">{text('Kare')}</option>
@@ -2721,7 +2705,10 @@ export default function FriendsPage({
         </div>
       ) : (
         <>
-          {error && <div className="friends-alert friends-alert-error" role="alert">{text(error)}</div>}
+          {error && <div className="friends-alert friends-alert-error" role="alert">
+            <span>{text(error)}</span>
+            <button className="friends-alert-dismiss" type="button" aria-label={text('Kapat')} onClick={clearError}><X size={14} /></button>
+          </div>}
           {presenceError && <div className="friends-alert friends-alert-warning" role="status">{text('Çevrimiçi durumu güncellenemedi.')}: {text(presenceError)}</div>}
         </>
       )}
@@ -3355,7 +3342,10 @@ export default function FriendsPage({
             <button className="friends-icon-action" type="button" aria-label={text('Kapat')} onClick={() => void closeAddCallParticipantDialog()}><X size={15} /></button>
           </div>
           <p>{text('Bir arkadaş seçerek geçici grup aramasına geçin. Oda arama bitince silinir.')}</p>
-          {error && <div className="friends-alert friends-alert-error" role="alert">{text(error)}</div>}
+          {error && <div className="friends-alert friends-alert-error" role="alert">
+            <span>{text(error)}</span>
+            <button className="friends-alert-dismiss" type="button" aria-label={text('Kapat')} onClick={clearError}><X size={14} /></button>
+          </div>}
           <label className="friends-add-call-select">
             <span>{text('Arkadaş seçin')}</span>
             <select value={callParticipantId} onChange={(event) => setCallParticipantId(event.target.value)}>

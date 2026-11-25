@@ -15,6 +15,42 @@ type LibrarySection = 'mods' | 'resourcepacks' | 'shaders';
 const IRIS_PROJECT_ID = 'YL57xq9U';
 const AppLanguageContext = createContext<AppLanguage>('en');
 
+function playWelcomeIntroSound() {
+  let context: AudioContext;
+  try {
+    context = new AudioContext();
+  } catch (reason) {
+    console.warn('Welcome sound could not be initialized.', reason);
+    return;
+  }
+  void context.resume().then(() => {
+    const notes = [523.25, 659.25, 783.99];
+    const startedAt = context.currentTime;
+    notes.forEach((frequency, index) => {
+      const startAt = startedAt + index * 0.18;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.08, startAt + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.16);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(startAt);
+      oscillator.stop(startAt + 0.17);
+    });
+    window.setTimeout(() => {
+      void context.close().catch((reason: unknown) => console.warn('Welcome sound could not be closed.', reason));
+    }, 800);
+  }).catch((reason: unknown) => {
+    console.warn('Welcome sound could not be played.', reason);
+    if (context.state !== 'closed') {
+      void context.close().catch((closeReason: unknown) => console.warn('Welcome sound could not be closed.', closeReason));
+    }
+  });
+}
+
 function useUiText() {
   const language = useContext(AppLanguageContext);
   return (text: string) => translateUi(language, text);
@@ -58,6 +94,8 @@ export default function App() {
   const [state, setState] = useState<LauncherState | null>(null);
   const [languageSetupRequired, setLanguageSetupRequired] = useState(false);
   const [setupLanguage, setSetupLanguage] = useState<AppLanguage>('en');
+  const [welcomeIntroVisible, setWelcomeIntroVisible] = useState(false);
+  const [mainWindowHighlighted, setMainWindowHighlighted] = useState(false);
   const [offlineUsername, setOfflineUsername] = useState('Player');
   const [mods, setMods] = useState<ModrinthProject[]>([]);
   const [modsTotal, setModsTotal] = useState(0);
@@ -111,21 +149,24 @@ export default function App() {
   const [westronAccount, setWestronAccount] = useState<WestronAccount | null>(null);
   const [westronProfile, setWestronProfile] = useState<WestronProfile | null>(null);
   const [skinAvatarFailed, setSkinAvatarFailed] = useState(false);
-  const [profileAvatarShape, setProfileAvatarShape] = useState<'round' | 'square'>(
-    localStorage.getItem('westron-profile-avatar-shape') === 'square' ? 'square' : 'round',
-  );
+  const [profileAvatarShape, setProfileAvatarShape] = useState<'round' | 'square'>(() => {
+    const savedShape = localStorage.getItem('westron-profile-avatar-shape')
+      ?? localStorage.getItem('westron-call-avatar-shape');
+    return savedShape === 'square' ? 'square' : 'round';
+  });
   const [performanceThemeEnabled, setPerformanceThemeEnabled] = useState(true);
-  const [performanceThemeChoice, setPerformanceThemeChoice] = useState<'default' | 'performance' | 'quality'>(() => {
+  const [performanceThemeChoice, setPerformanceThemeChoice] = useState<'default' | 'performance' | 'quality' | 'blue'>(() => {
     const choice = localStorage.getItem('westron-performance-theme');
-    return choice === 'performance' || choice === 'quality' ? choice : 'default';
+    return choice === 'performance' || choice === 'quality' || choice === 'blue' ? choice : 'default';
   });
   const [qualityShaderEnabled, setQualityShaderEnabled] = useState(false);
   const [customProfileManagerOpen, setCustomProfileManagerOpen] = useState(false);
+  const mainWindowHighlightTimerRef = useRef<number | null>(null);
   const text = (value: string) => translateUi(state?.language ?? 'en', value);
 
   function pushFriendNotification(notification: FriendsNotification) {
-    if (notification.kind === 'friend-request' && !friendNotificationTimersRef.current.has(notification.id)) {
-      const timer = window.setTimeout(() => dismissFriendNotification(notification.id), 7000);
+    if (notification.kind !== 'call' && !friendNotificationTimersRef.current.has(notification.id)) {
+      const timer = window.setTimeout(() => dismissFriendNotification(notification.id), 5000);
       friendNotificationTimersRef.current.set(notification.id, timer);
     }
     setFriendNotifications((current) => {
@@ -147,10 +188,6 @@ export default function App() {
     }
     setFriendNotifications((current) => current.filter((item) => item.id !== id));
   }
-  const installedLabel = text('kurulu');
-  const installedLoaderLabel = state?.loaderInstalled && state.loader
-    ? `${state.loader.charAt(0).toUpperCase()}${state.loader.slice(1)} ${installedLabel.charAt(0).toUpperCase()}${installedLabel.slice(1)}`
-    : null;
   const installPercent = Math.max(0, Math.min(100, Math.round(installProgress?.overallPercent ?? 0)));
   const pageTitle = text(pageLabels[page]);
 
@@ -196,7 +233,9 @@ export default function App() {
     if (!state || !window.nocturne) return;
     void window.nocturne.setTitleBarTheme(
       state.theme,
-      performanceThemeChoice === 'default' ? state.performanceMode : performanceThemeChoice,
+      performanceThemeChoice === 'default' || performanceThemeChoice === 'blue'
+        ? state.performanceMode
+        : performanceThemeChoice,
       performanceThemeEnabled,
     ).catch(reportError);
   }, [state?.theme, state?.performanceMode, performanceThemeEnabled, performanceThemeChoice]);
@@ -289,8 +328,33 @@ export default function App() {
       setOfflineUsername(nextState.offlineUsername);
       setSetupLanguage(nextState.language);
       setLanguageSetupRequired(!nextState.languageSetupComplete);
+      setWelcomeIntroVisible(
+        nextState.languageSetupComplete
+          && localStorage.getItem('westron-launcher-intro-pending') === 'true',
+      );
     }).catch(reportError);
     void window.nocturne.getGameVersions().then(setGameVersions).catch(reportError);
+  }, []);
+
+  useEffect(() => {
+    if (!window.nocturne) return undefined;
+    const unsubscribe = window.nocturne.onMainWindowHighlight(() => {
+      setMainWindowHighlighted(false);
+      if (mainWindowHighlightTimerRef.current !== null) {
+        window.clearTimeout(mainWindowHighlightTimerRef.current);
+      }
+      window.requestAnimationFrame(() => setMainWindowHighlighted(true));
+      mainWindowHighlightTimerRef.current = window.setTimeout(() => {
+        setMainWindowHighlighted(false);
+        mainWindowHighlightTimerRef.current = null;
+      }, 1100);
+    });
+    return () => {
+      unsubscribe();
+      if (mainWindowHighlightTimerRef.current !== null) {
+        window.clearTimeout(mainWindowHighlightTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -584,12 +648,18 @@ export default function App() {
   }
 
   async function saveLanguage(language: AppLanguage): Promise<boolean> {
+    const isInitialLanguageSetup = languageSetupRequired;
     setBusy('language');
     setError('');
     try {
+      if (isInitialLanguageSetup) playWelcomeIntroSound();
       setState(await window.nocturne.saveLanguage(language));
       setNotice(`${translate(language, 'language')}: ${SUPPORTED_LANGUAGES.find((item) => item.code === language)?.label ?? language}`);
       setLanguageSetupRequired(false);
+      if (isInitialLanguageSetup) {
+        localStorage.setItem('westron-launcher-intro-pending', 'true');
+        setWelcomeIntroVisible(true);
+      }
       return true;
     } catch (reason) {
       reportError(reason);
@@ -708,13 +778,13 @@ export default function App() {
   ) {
     const result = await perform(
       `mod:${projectId}`,
-      () => window.nocturne.installModVersion(projectId, selectedVersionId, confirmedDependencyIds),
+      () => window.nocturne.installModVersion(projectId, selectedVersionId, confirmedDependencyIds, true),
       (installResult) => {
         if (installResult.status === 'confirmation-required') return '';
-        if (!installResult.files.length) return `${modName} zaten yüklü.`;
+        if (!installResult.files.length) return `${modName} yüklendi.`;
         return installResult.dependencies.length > 0
-          ? `${modName} sürümü değiştirildi; ${installResult.dependencies.length} gerekli mod güncellendi.`
-          : `${modName} sürümü değiştirildi.`;
+          ? `${modName} yüklendi; ${installResult.dependencies.length} gerekli mod da yüklendi.`
+          : `${modName} yüklendi.`;
       },
     );
     if (!result) return;
@@ -753,11 +823,9 @@ export default function App() {
     setError('');
     setNotice('');
     try {
-      const result = await window.nocturne.installContent(type, projectId, selectedVersionId);
+      const result = await window.nocturne.installContent(type, projectId, selectedVersionId, true);
       await refresh();
-      setNotice(result.status === 'already-installed'
-        ? `${title} (${result.versionNumber}) zaten güncel.`
-        : `${title} ${result.versionNumber} sürümü yüklendi.`);
+      setNotice(`${title} ${result.versionNumber} sürümü yüklendi.`);
     } catch (reason) {
       reportError(reason);
     } finally {
@@ -824,7 +892,7 @@ export default function App() {
 
   return (
     <AppLanguageContext.Provider value={state?.language ?? 'en'}>
-    <div className="app-shell">
+    <div className={`app-shell${mainWindowHighlighted ? ' is-highlighted' : ''}`}>
       <aside className="sidebar">
         <a className="brand" href="#" onClick={(event) => { event.preventDefault(); setPage('home'); }}>
           <span className="brand-mark"><img src={launcherIcon} alt="" draggable="false" /></span>
@@ -918,7 +986,7 @@ export default function App() {
           </div>
           <div className="breadcrumbs"><span>WESTRON LAUNCHER</span><ChevronDown size={13} /><strong>{pageTitle}</strong></div>
           <div className="topbar-right">
-            <span className="top-version"><span className="online-dot" />{state?.menuModInstalled ? text('Westron Launcher Hazır') : installedLoaderLabel ?? `${text('Sürüm')} ${state?.gameVersion ?? '…'}`}</span>
+            <span className="top-version"><span className="online-dot" />{text('Westron Launcher Hazır')}</span>
             <button
               className="topbar-profile"
               type="button"
@@ -1164,6 +1232,12 @@ export default function App() {
             account={westronAccount}
             gameRunning={Boolean(state?.gameRunning)}
             language={state?.language ?? 'en'}
+            profileAvatarShape={profileAvatarShape}
+            onProfileAvatarShapeChange={(shape) => {
+              setProfileAvatarShape(shape);
+              localStorage.setItem('westron-profile-avatar-shape', shape);
+              localStorage.setItem('westron-call-avatar-shape', shape);
+            }}
             isActive={page === 'friends'}
             onOpenAccount={() => setPage('account')}
             onOpenScreenshots={() => setPage('screenshots')}
@@ -1181,7 +1255,7 @@ export default function App() {
               busy={busy}
               updateStatus={updateStatus}
               onCheckUpdates={() => { void checkForUpdates(); }}
-              gameBehavior={state?.gameBehavior ?? 'close-on-game-exit'}
+              gameBehavior={state?.gameBehavior ?? 'close-on-game-launch'}
               onGameBehaviorChange={(behavior) => { void saveGameBehavior(behavior); }}
               onOpenProfilesFolder={() => perform('folder', () => window.nocturne.openProfilesFolder())}
               onOpenSelectedProfileFolder={() => perform('folder', () => window.nocturne.openSelectedProfileFolder())}
@@ -1197,6 +1271,7 @@ export default function App() {
               onProfileAvatarShapeChange={(shape) => {
                 setProfileAvatarShape(shape);
                 localStorage.setItem('westron-profile-avatar-shape', shape);
+                localStorage.setItem('westron-call-avatar-shape', shape);
               }}
               onOpenVoiceSettings={() => {
                 sessionStorage.setItem('westron-open-voice-settings', 'true');
@@ -1278,6 +1353,15 @@ export default function App() {
           busy={busy === 'language'}
           error={error}
           onContinue={() => { void saveLanguage(setupLanguage); }}
+        />
+      )}
+      {welcomeIntroVisible && (
+        <WelcomeIntro
+          language={state?.language ?? 'en'}
+          onComplete={() => {
+            localStorage.removeItem('westron-launcher-intro-pending');
+            setWelcomeIntroVisible(false);
+          }}
         />
       )}
     </div>
@@ -1496,6 +1580,29 @@ function RemoveConfirmationModal({ fileName, size, contentType, busy, onCancel, 
             {t('Evet, kaldır')}
           </button>
         </div>
+      </section>
+    </div>
+  );
+}
+
+function WelcomeIntro({ language, onComplete }: { language: AppLanguage; onComplete: () => void }) {
+  const text = (value: string) => translateUi(language, value);
+  return (
+    <div className="welcome-intro-backdrop">
+      <section className="welcome-intro" role="dialog" aria-modal="true" aria-labelledby="welcome-intro-title">
+        <div className="welcome-intro-art" aria-hidden="true">
+          <span className="welcome-intro-orbit" />
+          <span className="welcome-intro-cube welcome-intro-cube-main"><img src={launcherIcon} alt="" /></span>
+          <span className="welcome-intro-cube welcome-intro-cube-small" />
+          <span className="welcome-intro-spark welcome-intro-spark-one" />
+          <span className="welcome-intro-spark welcome-intro-spark-two" />
+        </div>
+        <p className="eyebrow">WESTRON LAUNCHER</p>
+        <h1 id="welcome-intro-title">Westron Launcher Artık Çıktı!</h1>
+        <p>Çok Daha Özelleştirilebilir Ve Kullanışlı Launcher.</p>
+        <button className="button button-primary welcome-intro-close" type="button" onClick={onComplete}>
+          {text('Kapat')}
+        </button>
       </section>
     </div>
   );
@@ -2135,11 +2242,6 @@ function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, set
 
       <div className="section-title"><div><span className="eyebrow">{t('HIZLI ERİŞİM')}</span><h3>{t('Her şey yerli yerinde.')}</h3></div><button className="text-button" onClick={onOpenSettings}>{t('Tüm ayarlar')} <ArrowRight size={14} /></button></div>
       <div className="dashboard-grid">
-        <div className="info-card install-card">
-          <div className="card-icon violet"><Layers3 size={18} /></div><span className="card-kicker">{t('OYUN PROFİLİ')}</span>
-          <div className="card-main"><strong>{ready ? t('Oyun profili hazır') : profileReady ? t('Oyun arayüzünü ekle') : `${state?.loader ?? 'fabric'} ${t('profilini kur')}`}</strong><span>{ready ? `Minecraft ${state?.gameVersion} ${t('profili kullanıma hazır.')}` : profileReady ? t('Uyumlu Westron Launcher oyun arayüzünü kur.') : `${t('Minecraft için oyun dosyalarını hazırla:')} ${state?.gameVersion ?? ''}`}</span></div>
-          <button className="round-arrow" onClick={primaryAction} disabled={Boolean(busy)} aria-label={primaryLabel}><ArrowRight size={17} /></button>
-        </div>
         <div className="info-card">
           <div className="card-icon blue"><Box size={18} /></div><span className="card-kicker">{t('MOD KÜTÜPHANESİ')}</span>
           <div className="card-main"><strong>{state?.mods.length ?? 0} {t('mod yüklü')}</strong><span>{t('Uyumlu modları keşfet ve yönet.')}</span></div>
@@ -2156,7 +2258,6 @@ function HomePage({ state, microsoftAccount, microsoftBusy, offlineUsername, set
         <div className="status-item"><span className={`status-indicator ${state?.javaAvailable ? 'good' : 'warn'}`} /><span>JAVA RUNTIME</span><strong>{state?.javaAvailable ? t('Algılandı') : t('Bulunamadı')}</strong></div>
         <div className="status-separator" />
         <div className="status-item"><HardDrive size={15} /><span>{t('OYUN DİZİNİ')}</span><strong className="path-value" title={state?.minecraftDir}>{state?.minecraftDir ?? t('Yükleniyor…')}</strong></div>
-        <button className="status-change" onClick={onOpenSettings}>{t('Değiştir')} <ArrowRight size={13} /></button>
       </div>
     </>
   );
@@ -2208,7 +2309,7 @@ function ModsPage({ mods, totalHits, query, setQuery, busy, installedMods, insta
               </button>
             </div>
             <p>{mod.description}</p>
-            <div className="mod-tags">{mod.categories.slice(0, 2).map((category) => <span key={category}>{category.replaceAll('-', ' ')}</span>)}<span className="fabric-tag">FABRIC</span></div>
+            <div className="mod-tags">{mod.categories.filter((category) => category !== loader).slice(0, 2).map((category) => <span key={category}>{category.replaceAll('-', ' ')}</span>)}<span className="loader-tag">{loader.toUpperCase()}</span></div>
           </article>;
         })}
       </div>
@@ -2591,6 +2692,7 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
   const shareSelectionCount = shareFriendIds.length + shareGroupIds.length;
   const [downloadScreenshotPrompt, setDownloadScreenshotPrompt] = useState<GameScreenshot | null>(null);
   const [downloadBusy, setDownloadBusy] = useState(false);
+  const [deleteScreenshotPrompt, setDeleteScreenshotPrompt] = useState<GameScreenshot | null>(null);
 
   async function openShare(screenshot: GameScreenshot) {
     setShareScreenshot(screenshot);
@@ -2746,7 +2848,7 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
                 <button className="remove-mod screenshot-download-action" aria-label={`${t('İndir')}: ${screenshot.name}`} title={t('İndir')} disabled={Boolean(busy)} onClick={() => void downloadScreenshot(screenshot)}>
                   <Download size={15} />
                 </button>
-                <button className="remove-mod" aria-label={`${screenshot.name} ${t('dosyasını kaldır')}`} title={t('Sil')} disabled={Boolean(busy)} onClick={() => onDelete(screenshot.name)}>
+                <button className="remove-mod" aria-label={`${screenshot.name} ${t('dosyasını kaldır')}`} title={t('Sil')} disabled={Boolean(busy)} onClick={() => setDeleteScreenshotPrompt(screenshot)}>
                   {busy === `screenshot:${screenshot.name}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
                 </button>
               </div>
@@ -2779,21 +2881,46 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
           <section className="screenshot-modal" role="dialog" aria-modal="true" aria-label={selectedScreenshot.name}>
             <div className="screenshot-modal-heading">
               <strong title={selectedScreenshot.name}>{selectedScreenshot.name}</strong>
-              <button type="button" className="icon-button" aria-label={t('Önceki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) >= screenshots.length - 1} onClick={() => {
-                const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
-                if (index >= 0 && index < screenshots.length - 1) void openScreenshot(screenshots[index + 1]);
-              }}><ChevronLeft size={19} /></button>
-              <button type="button" className="icon-button" aria-label={t('Sonraki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) <= 0} onClick={() => {
-                const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
-                if (index > 0) void openScreenshot(screenshots[index - 1]);
-              }}><ChevronRight size={19} /></button>
               <button type="button" className="icon-button" aria-label={t('Kapat')} onClick={() => { setSelectedScreenshot(null); setSelectedScreenshotImage(''); }}><X size={18} /></button>
             </div>
-            {loadingFullImage
-              ? <div className="screenshot-modal-loading"><LoaderCircle className="spin" size={22} />{t('Ekran görüntüsü yükleniyor…')}</div>
-              : fullImageError
-                ? <div className="screenshot-modal-loading">{t('Ekran görüntüsü yüklenemedi.')}</div>
-                : selectedScreenshotImage && <img src={selectedScreenshotImage} alt={selectedScreenshot.name} />}
+            <div className="screenshot-modal-viewer">
+              <button type="button" className="screenshot-nav-arrow previous" aria-label={t('Sonraki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) >= screenshots.length - 1} onClick={() => {
+                const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
+                if (index >= 0 && index < screenshots.length - 1) void openScreenshot(screenshots[index + 1]);
+              }}><ChevronLeft size={20} /></button>
+              {loadingFullImage
+                ? <div className="screenshot-modal-loading"><LoaderCircle className="spin" size={22} />{t('Ekran görüntüsü yükleniyor…')}</div>
+                : fullImageError
+                  ? <div className="screenshot-modal-loading">{t('Ekran görüntüsü yüklenemedi.')}</div>
+                  : selectedScreenshotImage && <img src={selectedScreenshotImage} alt={selectedScreenshot.name} />}
+              <button type="button" className="screenshot-nav-arrow next" aria-label={t('Önceki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) <= 0} onClick={() => {
+                const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
+                if (index > 0) void openScreenshot(screenshots[index - 1]);
+              }}><ChevronRight size={20} /></button>
+            </div>
+          </section>
+        </div>
+      )}
+      {deleteScreenshotPrompt && (
+        <div className="dependency-modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !busy) setDeleteScreenshotPrompt(null);
+        }}>
+          <section className="dependency-modal screenshot-delete-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-screenshot-title">
+            <div className="dependency-modal-icon"><Trash2 size={20} /></div>
+            <h2 id="delete-screenshot-title">{t('Emin Misin?')}</h2>
+            <p>{t('Bu ekran görüntüsü kalıcı olarak silinecek.')}</p>
+            <strong className="screenshot-share-name">{deleteScreenshotPrompt.name}</strong>
+            <div className="dependency-modal-actions">
+              <button type="button" className="button button-ghost" onClick={() => setDeleteScreenshotPrompt(null)} disabled={Boolean(busy)}>{t('Vazgeç')}</button>
+              <button type="button" className="button button-danger" onClick={() => {
+                const fileName = deleteScreenshotPrompt.name;
+                setDeleteScreenshotPrompt(null);
+                onDelete(fileName);
+              }} disabled={Boolean(busy)}>
+                {busy === `screenshot:${deleteScreenshotPrompt.name}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}
+                {t('Sil')}
+              </button>
+            </div>
           </section>
         </div>
       )}
@@ -2896,8 +3023,8 @@ function SettingsPage({
   publisherAccount: WestronAccount | null;
   publisherBusy: boolean;
   onPublishUpdate: () => void;
-  performanceThemeChoice: 'default' | 'performance' | 'quality';
-  onPerformanceThemeChoiceChange: (choice: 'default' | 'performance' | 'quality') => void;
+  performanceThemeChoice: 'default' | 'performance' | 'quality' | 'blue';
+  onPerformanceThemeChoiceChange: (choice: 'default' | 'performance' | 'quality' | 'blue') => void;
   profileAvatarShape: 'round' | 'square';
   onProfileAvatarShapeChange: (shape: 'round' | 'square') => void;
   onOpenVoiceSettings: () => void;
@@ -2932,17 +3059,18 @@ function SettingsPage({
           </label>
         </div>
         <div className="setting-row">
-          <div><strong>{t('Westron Modu Teması')}</strong><span>{t('Seçili temanın renk düzenini değiştirir.')}</span></div>
+          <div><strong>{t('Westron Launcher Teması')}</strong><span>{t('Seçili temanın renk düzenini değiştirir.')}</span></div>
           <label className="language-select-label">
             <select value={performanceThemeChoice} onChange={(event) => {
               const choice = event.target.value;
-              if (choice === 'default' || choice === 'performance' || choice === 'quality') {
+              if (choice === 'default' || choice === 'performance' || choice === 'quality' || choice === 'blue') {
                 onPerformanceThemeChoiceChange(choice);
               }
             }}>
               <option value="default">{t('Varsayılan tema')}</option>
-              <option value="performance">{t('Performans teması')}</option>
-              <option value="quality">{t('Kalite teması')}</option>
+              <option value="performance">{t('Yeşil Tema')}</option>
+              <option value="quality">{t('Turuncu Tema')}</option>
+              <option value="blue">{t('Mavi Tema')}</option>
             </select>
           </label>
         </div>
@@ -2986,8 +3114,8 @@ function SettingsPage({
         </div>
       </section>
       <section className="settings-panel">
-        <div className="settings-heading"><div className="card-icon violet"><Play size={18} /></div><div><h3>{t('Westron Launcher davranışı')}</h3><span>{t('Minecraft çalışırken ve kapandıktan sonra launcher davranışını seç.')}</span></div></div>
-        <div className="setting-row"><div><strong>{t('Oyun ve launcher davranışı')}</strong><span>{t('Varsayılan: oyun kapandığında launcher da kapanır.')}</span></div><select value={gameBehavior} onChange={(event) => { if (['close-on-game-exit', 'stay-open', 'hide-and-restore'].includes(event.target.value)) onGameBehaviorChange(event.target.value as GameBehavior); }} disabled={Boolean(busy)}><option value="close-on-game-exit">{t('Oyun kapandığında Westron Launcher kapansın')}</option><option value="stay-open">{t('Westron Launcher her zaman açık kalsın')}</option><option value="hide-and-restore">{t('Oyun açılınca gizle, oyun kapanınca geri aç')}</option></select></div>
+        <div className="settings-heading"><div className="card-icon violet"><Play size={18} /></div><div><h3>{t('Westron Launcher davranışı')}</h3><span>{t('Westron Launcher’ın oyun açıldığında ve kapandığında nasıl davranacağını seç.')}</span></div></div>
+        <div className="setting-row"><div><strong>{t('Oyun ve launcher davranışı')}</strong><span>{t('Westron Launcher’ın oyun açıldığında ve kapandığında nasıl davranacağını seç.')}</span></div><select value={gameBehavior} onChange={(event) => { if (['close-on-game-launch', 'stay-open', 'hide-and-restore'].includes(event.target.value)) onGameBehaviorChange(event.target.value as GameBehavior); }} disabled={Boolean(busy)}><option value="close-on-game-launch">{t('Oyun Açıldığında Westron Launcher Kapansın')}</option><option value="stay-open">{t('Westron Launcher her zaman açık kalsın')}</option><option value="hide-and-restore">{t('Westron Launcher Oyun Açılınca Gizlensin, Oyun Kapanınca Geri Açılsın')}</option></select></div>
       </section>
       <section className="settings-panel system-panel">
         <div className="settings-heading"><div className="card-icon blue"><Cpu size={18} /></div><div><h3>{t('systemStatus')}</h3><span>{t('requiredComponents')}</span></div></div>

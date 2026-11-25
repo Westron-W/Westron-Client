@@ -184,6 +184,11 @@ contextBridge.exposeInMainWorld('nocturne', {
     ipcRenderer.on('app:voice-call-window-state', listener);
     return () => ipcRenderer.removeListener('app:voice-call-window-state', listener);
   },
+  onMainWindowHighlight: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('app:highlight-main-window', listener);
+    return () => ipcRenderer.removeListener('app:highlight-main-window', listener);
+  },
   playWestronNotification: (kind) => ipcRenderer.invoke('app:play-westron-notification', kind),
   showWestronNotification: (input) => ipcRenderer.invoke('app:show-westron-notification', input),
   onOpenFriends: (callback) => {

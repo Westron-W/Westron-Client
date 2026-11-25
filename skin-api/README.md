@@ -75,6 +75,8 @@ npm.cmd --prefix .\skin-api start
 
 Canlı API `/opt/westron/skin-api` konumunda, `westron-skin-api` Compose servisi olarak çalışır ve mevcut Nginx Proxy Manager ağına bağlıdır. 2026-11-22 dağıtımında API şeması 12'den 14'e yükseltildi; `/api/health`, POST mesaj geri alma ve grup araması sinyal rotaları doğrulandı. Dağıtım öncesi SQLite online yedeği `/data/db/skin-api.sqlite.pre-v14-20261122T123037Z`, kaynak yedeği ise `/home/ubuntu/westron-backups/skin-api-pre-v14-20261122T123037Z.tar.gz` konumunda bulunur. Önceki şema 12 yedekleri de geri dönüş için korunmuştur. Bu yönergeler sonraki kurulum/güncellemeler içindir. Mevcut web sitesi, sertifika, Crafty ve ilgisiz container'ları silmeyin/değiştirmeyin.
 
+2026-11-24'te yalnızca mesaj gönderim limiti güncellendi: aynı arkadaş veya gruba 10 saniyede 6'dan fazla metin mesajı gönderilirse sonraki gönderimler 5 saniyeliğine engellenir. API container'ı yeniden oluşturuldu; veritabanı şeması ve volume değiştirilmedi. Önceki kaynak dosyaları `/home/ubuntu/westron-backups/skin-api-message-rate-20261124_200302/` altında yedeklendi ve dağıtım sonrası `/api/health` ile `/api/openapi.yaml` doğrulandı.
+
 1. VDS'de mevcut container, port ve ağ durumunu salt okunur şekilde kaydedin; mevcut web site/NPM konfigürasyonunu yedekleyin:
 
    ```bash

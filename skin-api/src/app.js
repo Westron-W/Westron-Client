@@ -317,7 +317,7 @@ export async function buildApp({
       return sendError(reply, 413, 'payload_too_large', 'İstek veya skin dosyası izin verilen boyutu aşıyor.');
     }
     if (error.statusCode === 429 || error.error?.code === 'rate_limit_exceeded') {
-      return sendError(reply, 429, 'rate_limit_exceeded', 'Çok fazla istek gönderildi.');
+      return sendError(reply, 429, 'rate_limit_exceeded', 'İstek hızı sınırına ulaşıldı. Lütfen daha sonra tekrar deneyin.');
     }
     if (error.statusCode === 415
       || error.code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE'
@@ -341,7 +341,7 @@ export async function buildApp({
     });
   }
   const rateLimitErrorResponse = () => ({
-    error: { code: 'rate_limit_exceeded', message: 'Çok fazla istek gönderildi.' },
+    error: { code: 'rate_limit_exceeded', message: 'İstek hızı sınırına ulaşıldı. Lütfen daha sonra tekrar deneyin.' },
   });
   await app.register(rateLimit, {
     global: true,
@@ -360,6 +360,79 @@ export async function buildApp({
     SELECT id, username, username_normalized, email, email_verified
     FROM users WHERE id = ?
   `);
+  const loginFailures = new Map();
+  const messageRateLimits = new Map();
+  const messageRateWindowMs = 10_000;
+  const messageRateLimit = 6;
+  const messageCooldownMs = 5_000;
+  const loginFailureLimit = 5;
+  const loginFailureWindowMs = 5 * 60 * 1000;
+  const loginLockoutMs = 5 * 60 * 1000;
+  const loginLockoutError = () =>
+    new ApiError(429, 'login_temporarily_locked', 'Çok Fazla Yanlış Giriş Yapıldı. Lütfen Daha Sonra Tekrar Deneyin.');
+  function loginFailureKey(email, ip) {
+    return createHash('sha256')
+      .update(`${String(email).trim().toLowerCase()}\u0000${ip}`)
+      .digest('hex');
+  }
+  function assertLoginNotLocked(key, now = Date.now()) {
+    const failure = loginFailures.get(key);
+    if (!failure) return;
+    if (failure.lockedUntil > now) throw loginLockoutError();
+    if (failure.lockedUntil || failure.windowStartedAt + loginFailureWindowMs <= now) {
+      loginFailures.delete(key);
+    }
+  }
+  function recordLoginFailure(key, now = Date.now()) {
+    let failure = loginFailures.get(key);
+    if (!failure || failure.windowStartedAt + loginFailureWindowMs <= now) {
+      failure = { windowStartedAt: now, attempts: 0, lockedUntil: 0 };
+    }
+    failure.attempts += 1;
+    if (failure.attempts >= loginFailureLimit) {
+      failure.lockedUntil = now + loginLockoutMs;
+    }
+    loginFailures.delete(key);
+    loginFailures.set(key, failure);
+    while (loginFailures.size > 10_000) {
+      loginFailures.delete(loginFailures.keys().next().value);
+    }
+    if (failure.lockedUntil) throw loginLockoutError();
+  }
+  function getMessageRateBucket(key, now) {
+    for (const [bucketKey, bucket] of messageRateLimits) {
+      bucket.timestamps = bucket.timestamps.filter((timestamp) => timestamp > now - messageRateWindowMs);
+      if (bucket.blockedUntil <= now && bucket.blockedUntil !== 0) {
+        bucket.blockedUntil = 0;
+        bucket.timestamps = [];
+      }
+      if (bucket.blockedUntil === 0 && bucket.timestamps.length === 0) {
+        messageRateLimits.delete(bucketKey);
+      }
+    }
+    return messageRateLimits.get(key) ?? { timestamps: [], blockedUntil: 0 };
+  }
+  function assertMessageRateAvailable(key, now = Date.now()) {
+    const bucket = getMessageRateBucket(key, now);
+    if (bucket.blockedUntil > now) {
+      throw new ApiError(429, 'message_cooldown', 'Çok Hızlı Mesaj Gönderiyorsun! Lütfen 5 Saniye Bekle.');
+    }
+    if (bucket.timestamps.length >= messageRateLimit) {
+      bucket.timestamps = [];
+      bucket.blockedUntil = now + messageCooldownMs;
+      messageRateLimits.set(key, bucket);
+      throw new ApiError(429, 'message_cooldown', 'Çok Hızlı Mesaj Gönderiyorsun! Lütfen 5 Saniye Bekle.');
+    }
+    messageRateLimits.set(key, bucket);
+  }
+  function recordMessageTimestamp(key, now = Date.now()) {
+    const bucket = getMessageRateBucket(key, now);
+    bucket.timestamps.push(now);
+    messageRateLimits.set(key, bucket);
+    while (messageRateLimits.size > 10_000) {
+      messageRateLimits.delete(messageRateLimits.keys().next().value);
+    }
+  }
 
   async function authenticateWithPolicy(request, requireVerifiedEmail) {
     const token = parseBearerToken(request.headers.authorization);
@@ -871,7 +944,10 @@ export async function buildApp({
     },
   }, async (request, reply) => {
     const { email, password } = request.body;
+    const failureKey = loginFailureKey(email, request.ip);
+    assertLoginNotLocked(failureKey);
     if (!validateEmail(email) || typeof password !== 'string' || Buffer.byteLength(password, 'utf8') > 128) {
+      recordLoginFailure(failureKey);
       throw new ApiError(401, 'invalid_credentials', 'E-posta veya parola hatalı.');
     }
     const user = database.prepare(`
@@ -882,7 +958,11 @@ export async function buildApp({
       ? { algorithm: user.password_algorithm, salt: user.password_salt, hash: user.password_hash }
       : { algorithm: 'argon2id', salt: '', hash: dummyPasswordHash };
     const valid = await verifyPassword(password, credentials);
-    if (!user || !valid) throw new ApiError(401, 'invalid_credentials', 'E-posta veya parola hatalı.');
+    if (!user || !valid) {
+      recordLoginFailure(failureKey);
+      throw new ApiError(401, 'invalid_credentials', 'E-posta veya parola hatalı.');
+    }
+    loginFailures.delete(failureKey);
     if (!user.email_verified) throw new ApiError(403, 'email_not_verified', 'Giriş yapmadan önce e-posta adresinizi doğrulayın.');
     if (user.password_algorithm !== 'argon2id') {
       const upgraded = await hashPassword(password);
@@ -1793,6 +1873,7 @@ export async function buildApp({
         401: errorResponse,
         403: errorResponse,
         404: errorResponse,
+        429: errorResponse,
       },
     },
   }, async (request, reply) => {
@@ -1802,11 +1883,15 @@ export async function buildApp({
       SELECT 1 FROM friend_group_members WHERE group_id = ? AND user_id = ?
     `).get(request.params.groupId, request.skinUser.id);
     if (!isMember) throw new ApiError(404, 'group_not_found', 'Grup bulunamadı.');
+    const now = Date.now();
+    const cooldownKey = `group:${request.skinUser.id}:${request.params.groupId}`;
+    assertMessageRateAvailable(cooldownKey, now);
     const messageId = randomUUID();
     database.prepare(`
       INSERT INTO friend_group_messages (id, group_id, sender_user_id, body, kind, created_at)
       VALUES (?, ?, ?, ?, 'text', ?)
-    `).run(messageId, request.params.groupId, request.skinUser.id, body, new Date().toISOString());
+    `).run(messageId, request.params.groupId, request.skinUser.id, body, new Date(now).toISOString());
+    recordMessageTimestamp(cooldownKey, now);
     return reply.code(201).send({ messageId, kind: 'text' });
   });
 
@@ -2037,6 +2122,9 @@ export async function buildApp({
     if (!friendshipExists(request.skinUser.id, request.body.recipientUserId)) {
       throw new ApiError(404, 'friend_not_found', 'Bu kullanıcı arkadaş listenizde bulunmuyor.');
     }
+    const now = Date.now();
+    const cooldownKey = `direct:${request.skinUser.id}:${request.body.recipientUserId}`;
+    assertMessageRateAvailable(cooldownKey, now);
     const messageId = randomUUID();
     database.prepare(`
       INSERT INTO ephemeral_messages (id, sender_user_id, recipient_user_id, body, created_at, expires_at)
@@ -2046,9 +2134,10 @@ export async function buildApp({
       request.skinUser.id,
       request.body.recipientUserId,
       body,
-      new Date().toISOString(),
-      Date.now() + 100 * 365 * 24 * 60 * 60 * 1000,
+      new Date(now).toISOString(),
+      now + 100 * 365 * 24 * 60 * 60 * 1000,
     );
+    recordMessageTimestamp(cooldownKey, now);
     return reply.code(201).send({ messageId });
   });
 
