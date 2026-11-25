@@ -40,6 +40,25 @@ test('lists PNG screenshots newest first and supplies preview data', async (cont
   assert.equal(screenshots.total, 2);
 });
 
+test('loads previews for every screenshot when no page is requested', async (context) => {
+  const gameDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'westron-screenshots-all-'));
+  context.after(() => fs.rm(gameDirectory, { recursive: true, force: true }));
+  const directory = getScreenshotsDirectory(gameDirectory);
+  await fs.mkdir(directory);
+  await Promise.all(Array.from({ length: 26 }, (_, index) =>
+    fs.writeFile(path.join(directory, `capture-${index}.png`), 'image')));
+  const previewed = [];
+
+  const result = await listScreenshots(gameDirectory, (filePath) => {
+    previewed.push(path.basename(filePath));
+    return 'data:image/png;base64,preview';
+  });
+
+  assert.equal(result.total, 26);
+  assert.equal(result.items.length, 26);
+  assert.equal(previewed.length, 26);
+});
+
 test('creates previews only for the requested screenshot page', async (context) => {
   const gameDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'westron-screenshots-page-'));
   context.after(() => fs.rm(gameDirectory, { recursive: true, force: true }));

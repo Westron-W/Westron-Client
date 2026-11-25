@@ -133,7 +133,6 @@ export default function App() {
   } | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [screenshots, setScreenshots] = useState<GameScreenshot[]>([]);
-  const [screenshotsTotal, setScreenshotsTotal] = useState(0);
   const [screenshotStatus, setScreenshotStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [publisherBusy, setPublisherBusy] = useState(false);
   const [librarySection, setLibrarySection] = useState<LibrarySection>('mods');
@@ -287,34 +286,15 @@ export default function App() {
       setScreenshotStatus('error');
       return;
     }
-    setBusy('screenshots');
     setError('');
     setScreenshotStatus('loading');
     try {
-      const result = await window.nocturne.listScreenshotsPage(0, 12);
+      const result = await window.nocturne.listScreenshots();
       setScreenshots(result.items);
-      setScreenshotsTotal(result.total);
       setScreenshotStatus('ready');
     } catch (reason) {
       setScreenshotStatus('error');
       reportError(reason);
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function loadMoreScreenshots() {
-    if (busy || screenshots.length >= screenshotsTotal) return;
-    setBusy('screenshots-more');
-    setError('');
-    try {
-      const result = await window.nocturne.listScreenshotsPage(screenshots.length, 12);
-      setScreenshots((items) => [...items, ...result.items]);
-      setScreenshotsTotal(result.total);
-    } catch (reason) {
-      reportError(reason);
-    } finally {
-      setBusy('');
     }
   }
 
@@ -371,7 +351,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (page === 'screenshots') void refreshScreenshots();
+    void refreshScreenshots();
+  }, []);
+
+  useEffect(() => {
+    if (page === 'screenshots' && screenshotStatus !== 'loading') void refreshScreenshots();
   }, [page, state?.gameDirectory]);
 
   useEffect(() => {
@@ -1194,16 +1178,13 @@ export default function App() {
           {page === 'screenshots' && (
             <ScreenshotsPage
               screenshots={screenshots}
-              total={screenshotsTotal}
               status={screenshotStatus}
               busy={busy}
               onRefresh={() => { void refreshScreenshots(); }}
-              onLoadMore={() => { void loadMoreScreenshots(); }}
               onDelete={async (fileName) => {
                 await perform(`screenshot:${fileName}`, async () => {
                   await window.nocturne.deleteScreenshot(fileName);
                   setScreenshots((items) => items.filter((item) => item.name !== fileName));
-                  setScreenshotsTotal((total) => Math.max(0, total - 1));
                 }, () => text('Ekran görüntüsü silindi.'));
               }}
               onOpenFolder={() => perform('folder', () => window.nocturne.openScreenshotsFolder())}
@@ -2665,13 +2646,11 @@ function InstalledLibrarySection({
   );
 }
 
-function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMore, onDelete, onOpenFolder }: {
+function ScreenshotsPage({ screenshots, status, busy, onRefresh, onDelete, onOpenFolder }: {
   screenshots: GameScreenshot[];
-  total: number;
   status: 'loading' | 'ready' | 'error';
   busy: string;
   onRefresh: () => void;
-  onLoadMore: () => void;
   onDelete: (fileName: string) => void;
   onOpenFolder: () => void;
 }) {
@@ -2809,8 +2788,8 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
     <>
       <PageHeading eyebrow={t('OYUN GALERİSİ')} title={t('Ekran Görüntüleri')} description={t('Minecraft içinde aldığın ekran görüntülerini görüntüle ve yönet.')}>
         <div className="page-heading-actions">
-          <button className="button button-secondary" onClick={onRefresh} disabled={busy === 'screenshots'}>
-            {busy === 'screenshots' ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
+          <button className="button button-secondary" onClick={onRefresh} disabled={status === 'loading' || Boolean(busy)}>
+            {status === 'loading' ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}
             {t('Yenile')}
           </button>
           <button className="button button-secondary" onClick={onOpenFolder}><FolderOpen size={15} />{t('Dosya konumunu aç')}</button>
@@ -2838,7 +2817,7 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
                 aria-label={`${screenshot.name} ${t('görüntüsünü büyüt')}`}
                 onClick={() => { void openScreenshot(screenshot).catch(() => undefined); }}
               >
-                <img src={screenshot.preview} alt={screenshot.name} loading="lazy" />
+                <img src={screenshot.preview} alt={screenshot.name} />
               </button>
               <div className="screenshot-card-info">
                 <div><strong title={screenshot.name}>{screenshot.name}</strong><span>{new Intl.DateTimeFormat(languageLocales[language], { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(screenshot.modifiedAt))} · {formatBytes(screenshot.size)}</span></div>
@@ -2855,14 +2834,6 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
             </article>
           ))}
         </div>
-        {screenshots.length < total && (
-          <div className="load-more-results">
-            <button className="button button-secondary" onClick={onLoadMore} disabled={Boolean(busy)}>
-              {busy === 'screenshots-more' ? <LoaderCircle className="spin" size={16} /> : <ChevronDown size={16} />}
-              {t('Daha fazla öğe göster')}
-            </button>
-          </div>
-        )}
         </>
       ) : (
         <div className="empty-state"><div className="empty-icon"><Camera size={22} /></div><strong>{t('Henüz ekran görüntüsü yok.')}</strong><span>{t('Minecraft içinde F2 tuşuyla ekran görüntüsü al; burada görünecektir.')}</span></div>
@@ -2884,18 +2855,18 @@ function ScreenshotsPage({ screenshots, total, status, busy, onRefresh, onLoadMo
               <button type="button" className="icon-button" aria-label={t('Kapat')} onClick={() => { setSelectedScreenshot(null); setSelectedScreenshotImage(''); }}><X size={18} /></button>
             </div>
             <div className="screenshot-modal-viewer">
-              <button type="button" className="screenshot-nav-arrow previous" aria-label={t('Sonraki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) >= screenshots.length - 1} onClick={() => {
+              <button type="button" className="screenshot-nav-arrow previous" aria-label={t('Önceki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) <= 0} onClick={() => {
                 const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
-                if (index >= 0 && index < screenshots.length - 1) void openScreenshot(screenshots[index + 1]);
+                if (index > 0) void openScreenshot(screenshots[index - 1]);
               }}><ChevronLeft size={20} /></button>
               {loadingFullImage
                 ? <div className="screenshot-modal-loading"><LoaderCircle className="spin" size={22} />{t('Ekran görüntüsü yükleniyor…')}</div>
                 : fullImageError
                   ? <div className="screenshot-modal-loading">{t('Ekran görüntüsü yüklenemedi.')}</div>
                   : selectedScreenshotImage && <img src={selectedScreenshotImage} alt={selectedScreenshot.name} />}
-              <button type="button" className="screenshot-nav-arrow next" aria-label={t('Önceki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) <= 0} onClick={() => {
+              <button type="button" className="screenshot-nav-arrow next" aria-label={t('Sonraki')} disabled={screenshots.findIndex((item) => item.name === selectedScreenshot.name) >= screenshots.length - 1} onClick={() => {
                 const index = screenshots.findIndex((item) => item.name === selectedScreenshot.name);
-                if (index > 0) void openScreenshot(screenshots[index - 1]);
+                if (index >= 0 && index < screenshots.length - 1) void openScreenshot(screenshots[index + 1]);
               }}><ChevronRight size={20} /></button>
             </div>
           </section>

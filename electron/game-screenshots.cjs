@@ -14,12 +14,14 @@ function resolveScreenshotPath(gameDirectory, fileName) {
   return path.join(getScreenshotsDirectory(gameDirectory), fileName);
 }
 
-async function listScreenshots(gameDirectory, createPreview, { offset = 0, limit = 12 } = {}) {
+async function listScreenshots(gameDirectory, createPreview, options = {}) {
+  const { offset = 0, limit } = options;
+  const paged = Object.prototype.hasOwnProperty.call(options, 'limit');
   if (typeof createPreview !== 'function') {
     throw new Error('Ekran görüntüsü önizlemesi oluşturulamıyor.');
   }
   if (!Number.isSafeInteger(offset) || offset < 0
-    || !Number.isSafeInteger(limit) || limit < 1 || limit > 24) {
+    || (paged && (!Number.isSafeInteger(limit) || limit < 1 || limit > 24))) {
     throw new Error('Ekran görüntüsü sayfası geçersiz.');
   }
   const directory = getScreenshotsDirectory(gameDirectory);
@@ -42,7 +44,7 @@ async function listScreenshots(gameDirectory, createPreview, { offset = 0, limit
       };
     })))
     .sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
-  const page = screenshots.slice(offset, offset + limit).map((screenshot) => {
+  const page = screenshots.slice(offset, paged ? offset + limit : undefined).map((screenshot) => {
     const preview = createPreview(resolveScreenshotPath(gameDirectory, screenshot.name));
     if (typeof preview !== 'string' || !preview.startsWith('data:image/')) {
       throw new Error(`Ekran görüntüsü önizlemesi oluşturulamadı: ${screenshot.name}`);
