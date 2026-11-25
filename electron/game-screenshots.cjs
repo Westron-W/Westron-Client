@@ -44,13 +44,21 @@ async function listScreenshots(gameDirectory, createPreview, options = {}) {
       };
     })))
     .sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt));
-  const page = screenshots.slice(offset, paged ? offset + limit : undefined).map((screenshot) => {
-    const preview = createPreview(resolveScreenshotPath(gameDirectory, screenshot.name));
-    if (typeof preview !== 'string' || !preview.startsWith('data:image/')) {
-      throw new Error(`Ekran görüntüsü önizlemesi oluşturulamadı: ${screenshot.name}`);
+  const selectedScreenshots = screenshots.slice(offset, paged ? offset + limit : undefined);
+  const page = [];
+  for (let batchOffset = 0; batchOffset < selectedScreenshots.length; batchOffset += 12) {
+    const batch = selectedScreenshots.slice(batchOffset, batchOffset + 12).map((screenshot) => {
+      const preview = createPreview(resolveScreenshotPath(gameDirectory, screenshot.name));
+      if (typeof preview !== 'string' || !preview.startsWith('data:image/')) {
+        throw new Error(`Ekran görüntüsü önizlemesi oluşturulamadı: ${screenshot.name}`);
+      }
+      return { ...screenshot, preview };
+    });
+    page.push(...batch);
+    if (batchOffset + 12 < selectedScreenshots.length) {
+      await new Promise((resolve) => setImmediate(resolve));
     }
-    return { ...screenshot, preview };
-  });
+  }
   return { items: page, total: screenshots.length };
 }
 

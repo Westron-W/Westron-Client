@@ -113,23 +113,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .art-caption { position: absolute; bottom: 23px; display: flex; align-items: center; gap: 8px; color: #928ca3; font-size: 8px; font-weight: 650; letter-spacing: .16em; }
 .art-caption i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px rgba(129,214,174,.5); }
 @keyframes cube-float { 0%,100% { margin-top: 0; } 50% { margin-top: -13px; } }
-.download-bottom { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; gap: 24px; padding: 24px 5px 25px; }
-.download-bottom > div { display: flex; align-items: center; gap: 12px; }
 .bottom-icon { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; color: #b6a4ff; border: 1px solid rgba(169,147,255,.14); border-radius: 10px; background: rgba(169,147,255,.065); font-size: 14px; }
-.download-bottom > div span:last-child { display: grid; gap: 4px; }
-.download-bottom b { color: #d9d5e2; font-size: 10px; font-weight: 590; }
-.download-bottom small { color: #797687; font-size: 9px; }
-.bottom-link { padding: 10px 0 10px 15px; color: #b6a4ff; border: 0; border-left: 1px solid var(--line); background: transparent; cursor: pointer; font-size: 9px; white-space: nowrap; }
+.download-bottom { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); align-items: stretch; gap: 14px; padding: 22px 0 38px; }
+.download-feature { display: flex; min-width: 0; min-height: 114px; align-items: flex-start; gap: 12px; padding: 16px; border: 1px solid rgba(224,218,255,.08); border-radius: 12px; background: linear-gradient(145deg,rgba(21,21,30,.82),rgba(15,16,22,.86)); }
+.download-feature:nth-child(2) { transform: translateY(12px); }
+.download-feature-copy { display: grid; min-width: 0; align-content: start; gap: 5px; }
+.download-feature b { color: #d9d5e2; font-size: 10px; font-weight: 590; }
+.download-feature small { color: #858193; font-size: 9px; line-height: 1.65; }
+.bottom-link { justify-self: start; margin-top: 3px; padding: 3px 0 0; color: #b6a4ff; border: 0; background: transparent; cursor: pointer; font-size: 9px; white-space: nowrap; }
 .bottom-link span { margin-left: 7px; font-size: 14px; }
-.launcher-intro { display: grid; grid-template-columns: minmax(0,.8fr) minmax(0,1.2fr); align-items: start; gap: 32px; padding: 34px 0 42px; border-top: 1px solid rgba(224,218,255,.07); }
-.launcher-intro-heading { max-width: 610px; }
-.launcher-intro-heading h2 { margin: 9px 0 8px; color: #ece9f5; font-size: clamp(22px,3vw,30px); font-weight: 640; letter-spacing: -.045em; }
-.launcher-intro-heading p { max-width: 550px; margin: 0; color: #898697; font-size: 11px; line-height: 1.75; }
-.launcher-feature-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 13px; }
-.launcher-feature-card { min-height: 145px; padding: 17px; border: 1px solid rgba(224,218,255,.08); border-radius: 12px; background: linear-gradient(145deg,rgba(21,21,30,.82),rgba(15,16,22,.86)); }
-.feature-card-icon { display: grid; width: 31px; height: 31px; place-items: center; color: #c1b2ff; border: 1px solid rgba(169,147,255,.17); border-radius: 9px; background: rgba(169,147,255,.08); font-size: 15px; }
-.launcher-feature-card h3 { margin: 14px 0 6px; color: #e2deec; font-size: 11px; font-weight: 640; }
-.launcher-feature-card p { margin: 0; color: #858193; font-size: 9px; line-height: 1.7; }
 
 .content-page { padding: 40px 0 44px; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
@@ -263,9 +255,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .topbar { padding-right: 28px; padding-left: 28px; }
   .download-hero { padding: 37px 38px; }
   .download-art { transform: scale(.88); }
-  .download-bottom { gap: 14px; }
-  .launcher-intro { gap: 22px; }
-  .launcher-feature-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .download-bottom { gap: 10px; }
+  .download-feature { padding: 14px 12px; }
   .appearance-actions { gap: 5px; }
   .file-button { padding: 0 7px; }
 }
@@ -291,12 +282,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .art-cube { top: 25px; }
   .art-platform { bottom: 46px; }
   .art-caption { bottom: 1px; }
-  .download-bottom { grid-template-columns: 1fr 1fr; gap: 16px 10px; padding: 17px 3px 19px; }
-  .launcher-intro { grid-template-columns: 1fr; gap: 18px; padding: 27px 8px 34px; }
-  .launcher-feature-grid { grid-template-columns: 1fr; gap: 9px; }
-  .launcher-feature-card { min-height: auto; }
-  .download-bottom b { font-size: 9px; }
-  .download-bottom small { font-size: 8px; }
+  .download-bottom { grid-template-columns: 1fr; gap: 9px; padding: 17px 3px 25px; }
+  .download-feature { min-height: auto; padding: 13px; }
+  .download-feature:nth-child(2) { transform: none; }
+  .download-feature b { font-size: 9px; }
+  .download-feature small { font-size: 8px; }
   .bottom-icon { flex-basis: 29px; width: 29px; height: 29px; }
   .bottom-link { grid-column: 1/-1; padding: 10px 0 0; border-top: 1px solid var(--line); border-left: 0; text-align: left; }
   .content-page { padding: 25px 0 32px; }
@@ -339,6 +329,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .download-hero { padding-right: 17px; padding-left: 17px; }
   .download-art { margin-bottom: -25px; transform: scale(.58); transform-origin: center top; }
   .download-bottom { grid-template-columns: 1fr; }
+  .download-feature:nth-child(2) { transform: none; }
   .bottom-link { grid-column: auto; }
   .page-heading { flex-direction: column; gap: 8px; }
   .page-chip { margin: 0; }

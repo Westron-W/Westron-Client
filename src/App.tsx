@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type SyntheticEvent } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ComponentType, type ReactNode, type SyntheticEvent } from 'react';
 import { isAppLanguage, SUPPORTED_LANGUAGES, translate, translateUi, type AppLanguage } from './i18n';
-import FriendsPage, { FriendSkinFace, type FriendsNotification } from './FriendsPage';
+import { FriendSkinFace } from './FriendSkinFace';
+import type { FriendsNotification, FriendsPageProps } from './FriendsPage';
 import launcherIcon from '../build/app-icon.svg';
 import {
   ArrowDownToLine, ArrowRight, Box, Camera, Check, ChevronDown, ChevronLeft, ChevronRight, Compass, Download, Image, Share2,
@@ -134,6 +135,8 @@ export default function App() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [screenshots, setScreenshots] = useState<GameScreenshot[]>([]);
   const [screenshotStatus, setScreenshotStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const screenshotLoadGenerationRef = useRef(0);
+  const [FriendsPageComponent, setFriendsPageComponent] = useState<ComponentType<FriendsPageProps> | null>(null);
   const [publisherBusy, setPublisherBusy] = useState(false);
   const [librarySection, setLibrarySection] = useState<LibrarySection>('mods');
   const [libraryQueries, setLibraryQueries] = useState<Record<LibrarySection, string>>({
@@ -282,6 +285,7 @@ export default function App() {
   }
 
   async function refreshScreenshots() {
+    const generation = ++screenshotLoadGenerationRef.current;
     if (!window.nocturne) {
       setScreenshotStatus('error');
       return;
@@ -290,11 +294,14 @@ export default function App() {
     setScreenshotStatus('loading');
     try {
       const result = await window.nocturne.listScreenshots();
+      if (generation !== screenshotLoadGenerationRef.current) return;
       setScreenshots(result.items);
-      setScreenshotStatus('ready');
+      if (generation === screenshotLoadGenerationRef.current) setScreenshotStatus('ready');
     } catch (reason) {
-      setScreenshotStatus('error');
-      reportError(reason);
+      if (generation === screenshotLoadGenerationRef.current) {
+        setScreenshotStatus('error');
+        reportError(reason);
+      }
     }
   }
 
@@ -314,6 +321,21 @@ export default function App() {
       );
     }).catch(reportError);
     void window.nocturne.getGameVersions().then(setGameVersions).catch(reportError);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void import('./FriendsPage').then(({ default: LoadedFriendsPage }) => {
+        if (active) setFriendsPageComponent(() => LoadedFriendsPage);
+      }).catch((reason: unknown) => {
+        if (active) reportError(reason);
+      });
+    }, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -351,7 +373,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void refreshScreenshots();
+    const timer = window.setTimeout(() => { void refreshScreenshots(); }, 300);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -1184,7 +1207,9 @@ export default function App() {
               onDelete={async (fileName) => {
                 await perform(`screenshot:${fileName}`, async () => {
                   await window.nocturne.deleteScreenshot(fileName);
+                  screenshotLoadGenerationRef.current += 1;
                   setScreenshots((items) => items.filter((item) => item.name !== fileName));
+                  setScreenshotStatus('ready');
                 }, () => text('Ekran görüntüsü silindi.'));
               }}
               onOpenFolder={() => perform('folder', () => window.nocturne.openScreenshotsFolder())}
@@ -1209,23 +1234,29 @@ export default function App() {
               />
             </>
           )}
-          <FriendsPage
-            account={westronAccount}
-            gameRunning={Boolean(state?.gameRunning)}
-            language={state?.language ?? 'en'}
-            profileAvatarShape={profileAvatarShape}
-            onProfileAvatarShapeChange={(shape) => {
-              setProfileAvatarShape(shape);
-              localStorage.setItem('westron-profile-avatar-shape', shape);
-              localStorage.setItem('westron-call-avatar-shape', shape);
-            }}
-            isActive={page === 'friends'}
-            onOpenAccount={() => setPage('account')}
-            onOpenScreenshots={() => setPage('screenshots')}
-            onOpenFriends={() => setPage('friends')}
-            onNotification={pushFriendNotification}
-            onDismissNotification={dismissFriendNotification}
-          />
+          {FriendsPageComponent ? (
+            <FriendsPageComponent
+              account={westronAccount}
+              gameRunning={Boolean(state?.gameRunning)}
+              language={state?.language ?? 'en'}
+              profileAvatarShape={profileAvatarShape}
+              onProfileAvatarShapeChange={(shape) => {
+                setProfileAvatarShape(shape);
+                localStorage.setItem('westron-profile-avatar-shape', shape);
+                localStorage.setItem('westron-call-avatar-shape', shape);
+              }}
+              isActive={page === 'friends'}
+              onOpenAccount={() => setPage('account')}
+              onOpenScreenshots={() => setPage('screenshots')}
+              onOpenFriends={() => setPage('friends')}
+              onNotification={pushFriendNotification}
+              onDismissNotification={dismissFriendNotification}
+            />
+          ) : page === 'friends' ? (
+            <div className="empty-state screenshot-loading" role="status" aria-label={text('Arkadaşlar')}>
+              <LoaderCircle className="spin" size={22} />
+            </div>
+          ) : null}
           {page === 'settings' && (
             <SettingsPage
               state={state}
@@ -2817,7 +2848,7 @@ function ScreenshotsPage({ screenshots, status, busy, onRefresh, onDelete, onOpe
                 aria-label={`${screenshot.name} ${t('görüntüsünü büyüt')}`}
                 onClick={() => { void openScreenshot(screenshot).catch(() => undefined); }}
               >
-                <img src={screenshot.preview} alt={screenshot.name} />
+                <img src={screenshot.preview} alt={screenshot.name} loading="lazy" decoding="async" />
               </button>
               <div className="screenshot-card-info">
                 <div><strong title={screenshot.name}>{screenshot.name}</strong><span>{new Intl.DateTimeFormat(languageLocales[language], { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(screenshot.modifiedAt))} · {formatBytes(screenshot.size)}</span></div>

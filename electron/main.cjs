@@ -94,6 +94,8 @@ const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'settings.json');
 const WESTRON_AUTH_FILE = () => path.join(app.getPath('userData'), 'westron-auth.bin');
 const MICROSOFT_AUTH_FILE = () => path.join(app.getPath('userData'), 'microsoft-auth.bin');
 let minecraftKitPromise;
+let stateLoadPromise = null;
+const javaPathCache = new Map();
 let minecraftVersionsCache = { expiresAt: 0, versions: [] };
 let updateStatus = { status: 'idle', currentVersion: DISPLAY_VERSION, percent: 0 };
 let updateCheckPromise = null;
@@ -999,13 +1001,14 @@ function getContentDirectory(minecraftDir, type) {
 async function listFiles(directory, extensions) {
   try {
     const entries = await fs.readdir(directory, { withFileTypes: true });
-    const files = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !extensions.some((extension) => entry.name.toLowerCase().endsWith(extension))) continue;
-      const filePath = path.join(directory, entry.name);
-      const info = await fs.stat(filePath);
-      files.push({ name: entry.name, size: info.size });
-    }
+    const files = await Promise.all(entries
+      .filter((entry) => entry.isFile()
+        && extensions.some((extension) => entry.name.toLowerCase().endsWith(extension)))
+      .map(async (entry) => {
+        const filePath = path.join(directory, entry.name);
+        const info = await fs.stat(filePath);
+        return { name: entry.name, size: info.size };
+      }));
     return files.sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
     if (error.code === 'ENOENT') return [];
@@ -1017,30 +1020,49 @@ async function listMods(minecraftDir) {
   return listFiles(getModsDir(minecraftDir), ['.jar']);
 }
 
-async function getState() {
+function getState() {
+  if (!stateLoadPromise) {
+    stateLoadPromise = loadState().finally(() => {
+      stateLoadPromise = null;
+    });
+  }
+  return stateLoadPromise;
+}
+
+async function loadState() {
   const settings = await readSettings();
   const customProfile = getSelectedCustomProfile(settings);
   const gameVersion = customProfile?.gameVersion ?? settings.gameVersion;
   const loader = customProfile?.loader ?? settings.loader;
   const gameDirectory = customProfile?.directory ?? getInstanceDir(settings.minecraftDir, gameVersion, loader);
-  const performanceProfile = await readPerformanceProfile(gameDirectory);
-  let loaderInstalled = false;
-  try {
-    const versions = await fs.readdir(path.join(gameDirectory, 'versions'));
-    loaderInstalled = profileVersionIsInstalled(versions, gameVersion, loader);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
   const resourcePacksDir = getContentDirectory(gameDirectory, 'resourcepack');
   const shaderPacksDir = getContentDirectory(gameDirectory, 'shader');
-  const [unindexedMods, unindexedResourcePacks, unindexedShaderPacks] = await Promise.all([
+  const modsDir = getModsDir(gameDirectory);
+  const [
+    performanceProfile,
+    versions,
+    unindexedMods,
+    unindexedResourcePacks,
+    unindexedShaderPacks,
+    resourcePackInstalls,
+    shaderPackInstalls,
+    modInstalls,
+    javaAvailable,
+  ] = await Promise.all([
+    readPerformanceProfile(gameDirectory),
+    fs.readdir(path.join(gameDirectory, 'versions')).catch((error) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }),
     listMods(gameDirectory),
     listFiles(resourcePacksDir, ['.zip']),
     listFiles(shaderPacksDir, ['.zip']),
+    readInstallIndex(resourcePacksDir, '.zip'),
+    readInstallIndex(shaderPacksDir, '.zip'),
+    readInstallIndex(modsDir, '.jar'),
+    findJava(gameDirectory),
   ]);
-  const resourcePackInstalls = await readInstallIndex(resourcePacksDir, '.zip');
-  const shaderPackInstalls = await readInstallIndex(shaderPacksDir, '.zip');
-  const modInstalls = await readInstallIndex(getModsDir(gameDirectory), '.jar');
+  const loaderInstalled = profileVersionIsInstalled(versions, gameVersion, loader);
   const mods = addProjectIdsToFiles(unindexedMods, modInstalls);
   const resourcePacks = addProjectIdsToFiles(unindexedResourcePacks, resourcePackInstalls);
   const shaderPacks = addProjectIdsToFiles(unindexedShaderPacks, shaderPackInstalls);
@@ -1061,7 +1083,7 @@ async function getState() {
     loaderInstalled,
     fabricInstalled: loader === 'fabric' && loaderInstalled,
     westronModSupported: loader === 'fabric' && gameVersion === GAME_VERSION,
-    javaAvailable: await findJava(gameDirectory),
+    javaAvailable,
     mods,
     resourcePacks,
     shaderPacks,
@@ -1077,24 +1099,43 @@ async function getState() {
 
 async function findJava(minecraftDir) {
   const javaExecutable = process.platform === 'win32' ? 'java.exe' : 'java';
+  const cachedJavaPath = javaPathCache.get(minecraftDir);
+  if (cachedJavaPath) {
+    if (!path.isAbsolute(cachedJavaPath)) return cachedJavaPath;
+    try {
+      await fs.access(cachedJavaPath);
+      return cachedJavaPath;
+    } catch {
+      javaPathCache.delete(minecraftDir);
+    }
+  }
+  const cacheJavaPath = (javaPath) => {
+    javaPathCache.set(minecraftDir, javaPath);
+    return javaPath;
+  };
   const candidates = [process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', javaExecutable) : '']
     .filter(Boolean);
   const runtimeDir = path.join(minecraftDir, 'runtime');
   const pendingDirectories = [runtimeDir];
   while (pendingDirectories.length > 0) {
-    const currentDirectory = pendingDirectories.pop();
-    let entries;
-    try {
-      entries = await fs.readdir(currentDirectory, { withFileTypes: true });
-    } catch (error) {
-      if (error.code === 'ENOENT') continue;
-      throw error;
+    const currentDirectories = pendingDirectories.splice(0, 8);
+    const directoryEntries = await Promise.all(currentDirectories.map(async (directory) => {
+      try {
+        return await fs.readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      }
+    }));
+    const nextDirectories = [];
+    for (let directoryIndex = 0; directoryIndex < currentDirectories.length; directoryIndex += 1) {
+      for (const entry of directoryEntries[directoryIndex]) {
+        const entryPath = path.join(currentDirectories[directoryIndex], entry.name);
+        if (entry.isFile() && entry.name.toLowerCase() === javaExecutable) return cacheJavaPath(entryPath);
+        if (entry.isDirectory()) nextDirectories.push(entryPath);
+      }
     }
-    for (const entry of entries) {
-      const entryPath = path.join(currentDirectory, entry.name);
-      if (entry.isFile() && entry.name.toLowerCase() === javaExecutable) return entryPath;
-      else if (entry.isDirectory()) pendingDirectories.push(entryPath);
-    }
+    pendingDirectories.push(...nextDirectories);
   }
   if (process.platform === 'darwin') {
     const macJvmRoot = '/Library/Java/JavaVirtualMachines';
@@ -1120,12 +1161,12 @@ async function findJava(minecraftDir) {
         child.once('error', () => resolve(false));
         child.once('close', (code) => resolve(code === 0));
       });
-      if (available) return candidate;
+      if (available) return cacheJavaPath(candidate);
       continue;
     }
     try {
       await fs.access(candidate);
-      return candidate;
+      return cacheJavaPath(candidate);
     } catch {
       // Continue to PATH lookup.
     }
